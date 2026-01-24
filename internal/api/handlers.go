@@ -14,6 +14,9 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub) {
 	mux.HandleFunc("/api/ask", corsMiddleware(handleAsk(h)))
 	mux.HandleFunc("/api/answer/", corsMiddleware(handleAnswer(h)))
 	mux.HandleFunc("/api/questions", corsMiddleware(handleQuestions(h)))
+	mux.HandleFunc("/api/executors", corsMiddleware(handleExecutors(h)))
+	mux.HandleFunc("/api/executor/register", corsMiddleware(handleExecutorRegister(h)))
+	mux.HandleFunc("/api/executor/stop", corsMiddleware(handleExecutorStop(h)))
 	mux.HandleFunc("/api/events", handleSSE(h))
 	mux.HandleFunc("/api/health", handleHealth())
 }
@@ -119,6 +122,87 @@ func handleHealth() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}
+}
+
+// ExecutorRegisterRequest is the request body for POST /api/executor/register
+type ExecutorRegisterRequest struct {
+	GoalID    int    `json:"goal_id"`
+	SessionID string `json:"session_id"`
+	CWD       string `json:"cwd"`
+}
+
+// ExecutorRegisterResponse is the response for POST /api/executor/register
+type ExecutorRegisterResponse struct {
+	OK      bool   `json:"ok"`
+	Context string `json:"context"`
+}
+
+// ExecutorStopRequest is the request body for POST /api/executor/stop
+type ExecutorStopRequest struct {
+	GoalID    int    `json:"goal_id"`
+	SessionID string `json:"session_id"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// handleExecutorRegister handles POST /api/executor/register
+func handleExecutorRegister(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req ExecutorRegisterRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		// Register the executor and get context
+		context := h.RegisterExecutor(req.GoalID, req.SessionID, req.CWD)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ExecutorRegisterResponse{
+			OK:      true,
+			Context: context,
+		})
+	}
+}
+
+// handleExecutorStop handles POST /api/executor/stop
+func handleExecutorStop(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req ExecutorStopRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		// Stop the executor
+		h.StopExecutor(req.GoalID, req.SessionID, req.Reason)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}
+}
+
+// handleExecutors handles GET /api/executors
+func handleExecutors(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		executors := h.GetActiveExecutors()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(executors)
 	}
 }
 
