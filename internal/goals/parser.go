@@ -225,12 +225,15 @@ type Task struct {
 // ParseGoalDetail reads and parses a specific goal file
 func (p *Parser) ParseGoalDetail(id int) (*GoalDetail, error) {
 	goalPath := filepath.Join(p.dir, "goals", "active", strconv.Itoa(id)+".md")
+	goalStatus := "active"
 
 	// Try active first, then iced, then completed
 	if _, err := os.Stat(goalPath); os.IsNotExist(err) {
 		goalPath = filepath.Join(p.dir, "goals", "iced", strconv.Itoa(id)+".md")
+		goalStatus = "iced"
 		if _, err := os.Stat(goalPath); os.IsNotExist(err) {
 			goalPath = filepath.Join(p.dir, "goals", "history", strconv.Itoa(id)+".md")
+			goalStatus = "completed"
 		}
 	}
 
@@ -241,7 +244,7 @@ func (p *Parser) ParseGoalDetail(id int) (*GoalDetail, error) {
 	defer file.Close()
 
 	detail := &GoalDetail{
-		Goal: Goal{ID: id},
+		Goal: Goal{ID: id, Status: goalStatus},
 	}
 
 	scanner := bufio.NewScanner(file)
