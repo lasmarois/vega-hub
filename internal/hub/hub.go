@@ -176,6 +176,11 @@ func itoa(i int) string {
 	return fmt.Sprintf("%d", i)
 }
 
+// Dir returns the vega-missile directory
+func (h *Hub) Dir() string {
+	return h.dir
+}
+
 // execCommand runs a command and returns any error
 func execCommand(name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)

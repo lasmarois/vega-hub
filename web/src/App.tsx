@@ -42,12 +42,27 @@ interface GoalDetail {
   active_executors: { session_id: string; goal_id: number; cwd: string; started_at: string }[]
 }
 
+interface GoalStatus {
+  current_phase: string
+  recent_actions: string[]
+  progress_log: string
+  task_plan: string
+  findings: string
+  has_worktree: boolean
+  worktree_path: string
+  phase_progress: { number: number; title: string; status: string; tasks_total: number; tasks_done: number }[]
+}
+
 function App() {
   const [goals, setGoals] = useState<GoalSummary[]>([])
   const [selectedGoal, setSelectedGoal] = useState<GoalDetail | null>(null)
+  const [goalStatus, setGoalStatus] = useState<GoalStatus | null>(null)
   const [connected, setConnected] = useState(false)
   const [answerText, setAnswerText] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
+  const [spawnContext, setSpawnContext] = useState('')
+  const [showSpawnModal, setShowSpawnModal] = useState(false)
+  const [spawning, setSpawning] = useState(false)
 
   // Fetch goals on mount
   useEffect(() => {
@@ -125,11 +140,64 @@ function App() {
       if (res.ok) {
         const data = await res.json()
         setSelectedGoal(data)
+        // Also fetch status from planning files
+        fetchGoalStatus(id)
       }
     } catch (err) {
       console.error('Failed to fetch goal detail:', err)
     }
   }
+
+  const fetchGoalStatus = async (id: number) => {
+    try {
+      const res = await fetch(`/api/goals/${id}/status`)
+      if (res.ok) {
+        const data = await res.json()
+        setGoalStatus(data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch goal status:', err)
+    }
+  }
+
+  const handleSpawnExecutor = async () => {
+    if (!selectedGoal) return
+    setSpawning(true)
+    try {
+      const res = await fetch(`/api/goals/${selectedGoal.id}/spawn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context: spawnContext || undefined }),
+      })
+
+      if (res.ok) {
+        setShowSpawnModal(false)
+        setSpawnContext('')
+        // Refresh after spawn
+        fetchGoals()
+        fetchGoalDetail(selectedGoal.id)
+      } else {
+        const data = await res.json()
+        alert('Failed to spawn executor: ' + data.message)
+      }
+    } catch (err) {
+      console.error('Failed to spawn executor:', err)
+      alert('Failed to spawn executor')
+    } finally {
+      setSpawning(false)
+    }
+  }
+
+  // Auto-refresh goal status while executor is running
+  useEffect(() => {
+    if (!selectedGoal || selectedGoal.executor_status !== 'running') return
+
+    const interval = setInterval(() => {
+      fetchGoalStatus(selectedGoal.id)
+    }, 5000) // Refresh every 5 seconds
+
+    return () => clearInterval(interval)
+  }, [selectedGoal])
 
   const handleAnswer = async (questionId: string) => {
     const answer = answerText[questionId]
@@ -379,27 +447,159 @@ function App() {
                 </div>
               )}
 
-              {/* Active Executors */}
-              {selectedGoal.active_executors && selectedGoal.active_executors.length > 0 && (
-                <div className="mb-6">
-                  <h3 className="text-lg font-semibold text-gray-300 mb-3">
-                    Active Executors ({selectedGoal.active_executors.length})
-                  </h3>
-                  <div className="space-y-2">
-                    {selectedGoal.active_executors.map((e) => (
-                      <div
-                        key={e.session_id}
-                        className="bg-gray-800 border border-gray-700 rounded-lg p-3 text-sm"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-green-500" />
-                          <span className="font-mono">{e.session_id.slice(0, 16)}...</span>
-                        </div>
-                        <div className="mt-1 text-gray-500">
-                          <span>Started: {new Date(e.started_at).toLocaleString()}</span>
-                        </div>
+              {/* Executor Control Panel */}
+              <div className="mb-6">
+                <h3 className="text-lg font-semibold text-gray-300 mb-3">Executor Control</h3>
+                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                  {/* Status display */}
+                  {goalStatus && goalStatus.has_worktree ? (
+                    <div className="mb-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-sm text-gray-400">Current Phase:</span>
+                        <span className="text-sm font-medium">{goalStatus.current_phase || 'Unknown'}</span>
                       </div>
-                    ))}
+
+                      {/* Phase progress bars */}
+                      {goalStatus.phase_progress && goalStatus.phase_progress.length > 0 && (
+                        <div className="space-y-2 mb-4">
+                          {goalStatus.phase_progress.map((p) => (
+                            <div key={p.number} className="flex items-center gap-2 text-sm">
+                              <span className="w-20 text-gray-400">Phase {p.number}</span>
+                              <div className="flex-1 bg-gray-700 rounded-full h-2">
+                                <div
+                                  className={`h-2 rounded-full ${
+                                    p.status === 'complete' ? 'bg-green-500' :
+                                    p.status === 'in_progress' ? 'bg-blue-500' :
+                                    'bg-gray-600'
+                                  }`}
+                                  style={{ width: `${p.tasks_total > 0 ? (p.tasks_done / p.tasks_total) * 100 : 0}%` }}
+                                />
+                              </div>
+                              <span className="text-gray-500 w-16 text-right">
+                                {p.tasks_done}/{p.tasks_total}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Recent actions */}
+                      {goalStatus.recent_actions && goalStatus.recent_actions.length > 0 && (
+                        <div className="mb-4">
+                          <h4 className="text-sm text-gray-400 mb-2">Recent Actions:</h4>
+                          <ul className="text-sm text-gray-500 space-y-1">
+                            {goalStatus.recent_actions.map((action, i) => (
+                              <li key={i} className="flex items-start gap-2">
+                                <span className="text-gray-600">•</span>
+                                <span>{action}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mb-4 text-sm text-gray-500">
+                      No worktree found - executor may not have started yet
+                    </div>
+                  )}
+
+                  {/* Active Executors */}
+                  {selectedGoal.active_executors && selectedGoal.active_executors.length > 0 ? (
+                    <div className="mb-4">
+                      <h4 className="text-sm text-gray-400 mb-2">
+                        Active Sessions ({selectedGoal.active_executors.length})
+                      </h4>
+                      <div className="space-y-2">
+                        {selectedGoal.active_executors.map((e) => (
+                          <div
+                            key={e.session_id}
+                            className="bg-gray-700/50 rounded p-2 text-sm"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                              <span className="font-mono text-xs">{e.session_id.slice(0, 16)}...</span>
+                            </div>
+                            <div className="mt-1 text-gray-500 text-xs">
+                              Started: {new Date(e.started_at).toLocaleString()}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mb-4 text-sm text-gray-500">
+                      No active executors
+                    </div>
+                  )}
+
+                  {/* Spawn button */}
+                  {selectedGoal.status === 'active' && (
+                    <button
+                      onClick={() => setShowSpawnModal(true)}
+                      disabled={selectedGoal.executor_status === 'running' || selectedGoal.executor_status === 'waiting'}
+                      className="flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded font-medium"
+                    >
+                      <span>▶</span>
+                      <span>
+                        {selectedGoal.executor_status === 'running' ? 'Executor Running' :
+                         selectedGoal.executor_status === 'waiting' ? 'Waiting for Answer' :
+                         'Resume Executor'}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Spawn Modal */}
+              {showSpawnModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                  <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 w-full max-w-lg mx-4">
+                    <h3 className="text-lg font-semibold mb-4">Resume Executor for Goal #{selectedGoal.id}</h3>
+
+                    <div className="mb-4">
+                      <label className="block text-sm text-gray-400 mb-2">
+                        Additional Context (optional)
+                      </label>
+                      <textarea
+                        value={spawnContext}
+                        onChange={(e) => setSpawnContext(e.target.value)}
+                        placeholder="Add any additional instructions or context for the executor..."
+                        className="w-full h-32 bg-gray-700 border border-gray-600 rounded px-4 py-2 text-sm focus:outline-none focus:border-blue-500 resize-none"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Default: "Continue working on your assigned goal."
+                      </p>
+                    </div>
+
+                    <div className="flex justify-end gap-3">
+                      <button
+                        onClick={() => {
+                          setShowSpawnModal(false)
+                          setSpawnContext('')
+                        }}
+                        className="px-4 py-2 rounded border border-gray-600 hover:border-gray-500"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleSpawnExecutor}
+                        disabled={spawning}
+                        className="bg-green-600 hover:bg-green-700 disabled:bg-gray-600 px-4 py-2 rounded font-medium flex items-center gap-2"
+                      >
+                        {spawning ? (
+                          <>
+                            <span className="animate-spin">⟳</span>
+                            <span>Spawning...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>▶</span>
+                            <span>Spawn Executor</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

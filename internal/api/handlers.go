@@ -22,7 +22,7 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, p *goals.Parser) {
 	mux.HandleFunc("/api/events", handleSSE(h))
 	mux.HandleFunc("/api/health", handleHealth())
 	mux.HandleFunc("/api/goals", corsMiddleware(handleGoals(h, p)))
-	mux.HandleFunc("/api/goals/", corsMiddleware(handleGoalDetail(h, p)))
+	mux.HandleFunc("/api/goals/", corsMiddleware(handleGoalRoutes(h, p)))
 }
 
 // AskRequest is the request body for POST /api/ask
@@ -310,24 +310,53 @@ type GoalDetailResponse struct {
 	ActiveExecutors  []*hub.Executor `json:"active_executors"`
 }
 
-// handleGoalDetail handles GET /api/goals/:id - returns goal detail with Q&A
-func handleGoalDetail(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
+// SpawnRequest is the request body for POST /api/goals/:id/spawn
+type SpawnRequest struct {
+	Context string `json:"context,omitempty"`
+}
 
-		// Extract ID from path
-		idStr := strings.TrimPrefix(r.URL.Path, "/api/goals/")
-		if idStr == "" {
+// handleGoalRoutes routes /api/goals/:id/* requests
+func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Parse path: /api/goals/:id or /api/goals/:id/action
+		path := strings.TrimPrefix(r.URL.Path, "/api/goals/")
+		parts := strings.SplitN(path, "/", 2)
+
+		if len(parts) == 0 || parts[0] == "" {
 			http.Error(w, "Missing goal ID", http.StatusBadRequest)
 			return
 		}
 
-		id, err := strconv.Atoi(idStr)
+		id, err := strconv.Atoi(parts[0])
 		if err != nil {
 			http.Error(w, "Invalid goal ID", http.StatusBadRequest)
+			return
+		}
+
+		// Route to appropriate handler
+		if len(parts) == 1 {
+			// GET /api/goals/:id
+			handleGoalDetail(h, p, id)(w, r)
+			return
+		}
+
+		action := parts[1]
+		switch action {
+		case "spawn":
+			handleGoalSpawn(h, id)(w, r)
+		case "status":
+			handleGoalStatus(h, id)(w, r)
+		default:
+			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
+		}
+	}
+}
+
+// handleGoalDetail handles GET /api/goals/:id - returns goal detail with Q&A
+func handleGoalDetail(h *hub.Hub, p *goals.Parser, id int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -376,5 +405,53 @@ func handleGoalDetail(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// handleGoalSpawn handles POST /api/goals/:id/spawn - spawns an executor
+func handleGoalSpawn(h *hub.Hub, goalID int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req SpawnRequest
+		if r.Body != nil && r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
+		}
+
+		result := h.SpawnExecutor(hub.SpawnRequest{
+			GoalID:  goalID,
+			Context: req.Context,
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		if !result.Success {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+// handleGoalStatus handles GET /api/goals/:id/status - returns planning file status
+func handleGoalStatus(h *hub.Hub, goalID int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		status, err := h.GetGoalStatus(goalID)
+		if err != nil {
+			http.Error(w, "Failed to get status: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(status)
 	}
 }
