@@ -346,6 +346,8 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleGoalSpawn(h, id)(w, r)
 		case "status":
 			handleGoalStatus(h, id)(w, r)
+		case "output":
+			handleGoalOutput(h, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -453,5 +455,44 @@ func handleGoalStatus(h *hub.Hub, goalID int) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(status)
+	}
+}
+
+// OutputResponse is the response for GET /api/goals/:id/output
+type OutputResponse struct {
+	Output    string `json:"output"`
+	Available bool   `json:"available"`
+}
+
+// handleGoalOutput handles GET /api/goals/:id/output - returns executor output
+func handleGoalOutput(h *hub.Hub, goalID int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Check for tail parameter (last N lines)
+		tailParam := r.URL.Query().Get("tail")
+		var output string
+		var err error
+
+		if tailParam != "" {
+			lines, parseErr := strconv.Atoi(tailParam)
+			if parseErr != nil {
+				lines = 50 // default
+			}
+			output, err = h.GetExecutorOutputTail(goalID, lines)
+		} else {
+			output, err = h.GetExecutorOutput(goalID)
+		}
+
+		response := OutputResponse{
+			Output:    output,
+			Available: err == nil && output != "",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 	}
 }

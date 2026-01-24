@@ -1,8 +1,11 @@
 package hub
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -29,6 +32,7 @@ type Executor struct {
 	GoalID    int       `json:"goal_id"`
 	CWD       string    `json:"cwd"`
 	StartedAt time.Time `json:"started_at"`
+	LogFile   string    `json:"log_file,omitempty"`
 }
 
 // Question represents a pending question from an executor
@@ -69,12 +73,14 @@ func New(dir string) *Hub {
 
 // RegisterExecutor registers a new executor session and returns context
 func (h *Hub) RegisterExecutor(goalID int, sessionID, cwd string) string {
+	logFile := filepath.Join(cwd, ".executor-output.log")
 	h.mu.Lock()
 	h.executors[sessionID] = &Executor{
 		SessionID: sessionID,
 		GoalID:    goalID,
 		CWD:       cwd,
 		StartedAt: time.Now(),
+		LogFile:   logFile,
 	}
 	h.mu.Unlock()
 
@@ -101,22 +107,31 @@ func (h *Hub) RegisterExecutor(goalID int, sessionID, cwd string) string {
 
 // StopExecutor marks an executor session as stopped
 func (h *Hub) StopExecutor(goalID int, sessionID, reason string) {
+	// Get executor info before removing (for log file path)
 	h.mu.Lock()
+	executor := h.executors[sessionID]
 	delete(h.executors, sessionID)
 	h.mu.Unlock()
+
+	// Read output summary from log file
+	var outputSummary string
+	if executor != nil && executor.LogFile != "" {
+		outputSummary = h.readLastLines(executor.LogFile, 50)
+	}
 
 	// Write to markdown
 	if err := h.mdWriter.WriteExecutorEvent(goalID, sessionID, "Stopped", reason); err != nil {
 		// Log error but don't fail
 	}
 
-	// Broadcast executor stopped event
+	// Broadcast executor stopped event with output
 	h.broadcast(Event{
 		Type: "executor_stopped",
 		Data: map[string]interface{}{
 			"session_id": sessionID,
 			"goal_id":    goalID,
 			"reason":     reason,
+			"output":     outputSummary,
 		},
 	})
 
@@ -285,4 +300,58 @@ func (h *Hub) broadcast(event Event) {
 			// Skip slow subscribers
 		}
 	}
+}
+
+// readLastLines reads the last N lines from a file
+func (h *Hub) readLastLines(filePath string, n int) string {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+		if len(lines) > n {
+			lines = lines[1:]
+		}
+	}
+
+	result := ""
+	for i, line := range lines {
+		if i > 0 {
+			result += "\n"
+		}
+		result += line
+	}
+	return result
+}
+
+// GetExecutorOutput returns the full output for a goal's executor
+func (h *Hub) GetExecutorOutput(goalID int) (string, error) {
+	worktree, err := h.findWorktree(goalID)
+	if err != nil {
+		return "", err
+	}
+
+	logFile := filepath.Join(worktree, ".executor-output.log")
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
+}
+
+// GetExecutorOutputTail returns the last N lines of output for a goal's executor
+func (h *Hub) GetExecutorOutputTail(goalID int, lines int) (string, error) {
+	worktree, err := h.findWorktree(goalID)
+	if err != nil {
+		return "", err
+	}
+
+	logFile := filepath.Join(worktree, ".executor-output.log")
+	return h.readLastLines(logFile, lines), nil
 }

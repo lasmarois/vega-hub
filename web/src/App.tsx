@@ -63,6 +63,9 @@ function App() {
   const [spawnContext, setSpawnContext] = useState('')
   const [showSpawnModal, setShowSpawnModal] = useState(false)
   const [spawning, setSpawning] = useState(false)
+  const [executorOutput, setExecutorOutput] = useState<string>('')
+  const [showOutput, setShowOutput] = useState(false)
+  const [outputLoading, setOutputLoading] = useState(false)
 
   // Fetch goals on mount
   useEffect(() => {
@@ -106,7 +109,13 @@ function App() {
       }
     })
 
-    eventSource.addEventListener('executor_stopped', () => {
+    eventSource.addEventListener('executor_stopped', (e) => {
+      const data = JSON.parse(e.data)
+      // Show output from the stopped executor
+      if (data.output && data.goal_id === selectedGoal?.id) {
+        setExecutorOutput(data.output)
+        setShowOutput(true)
+      }
       fetchGoals()
       if (selectedGoal) {
         fetchGoalDetail(selectedGoal.id)
@@ -160,6 +169,27 @@ function App() {
     }
   }
 
+  const fetchExecutorOutput = async (id: number) => {
+    setOutputLoading(true)
+    try {
+      const res = await fetch(`/api/goals/${id}/output`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.available) {
+          setExecutorOutput(data.output)
+          setShowOutput(true)
+        } else {
+          setExecutorOutput('No output available')
+          setShowOutput(true)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch executor output:', err)
+    } finally {
+      setOutputLoading(false)
+    }
+  }
+
   const handleSpawnExecutor = async () => {
     if (!selectedGoal) return
     setSpawning(true)
@@ -173,6 +203,8 @@ function App() {
       if (res.ok) {
         setShowSpawnModal(false)
         setSpawnContext('')
+        setExecutorOutput('')
+        setShowOutput(true) // Auto-show output panel
         // Refresh after spawn
         fetchGoals()
         fetchGoalDetail(selectedGoal.id)
@@ -198,6 +230,33 @@ function App() {
 
     return () => clearInterval(interval)
   }, [selectedGoal])
+
+  // Auto-refresh output while executor is running and output panel is shown
+  useEffect(() => {
+    if (!selectedGoal || selectedGoal.executor_status !== 'running' || !showOutput) return
+
+    const fetchOutput = async () => {
+      try {
+        const res = await fetch(`/api/goals/${selectedGoal.id}/output?tail=100`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.available) {
+            setExecutorOutput(data.output)
+          }
+        }
+      } catch (err) {
+        // Ignore errors during polling
+      }
+    }
+
+    // Fetch immediately
+    fetchOutput()
+
+    // Then poll every 2 seconds
+    const interval = setInterval(fetchOutput, 2000)
+
+    return () => clearInterval(interval)
+  }, [selectedGoal, showOutput])
 
   const handleAnswer = async (questionId: string) => {
     const answer = answerText[questionId]
@@ -533,20 +592,48 @@ function App() {
                     </div>
                   )}
 
-                  {/* Spawn button */}
-                  {selectedGoal.status === 'active' && (
+                  {/* Action buttons */}
+                  <div className="flex gap-3">
+                    {selectedGoal.status === 'active' && (
+                      <button
+                        onClick={() => setShowSpawnModal(true)}
+                        disabled={selectedGoal.executor_status === 'running' || selectedGoal.executor_status === 'waiting'}
+                        className="flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded font-medium"
+                      >
+                        <span>▶</span>
+                        <span>
+                          {selectedGoal.executor_status === 'running' ? 'Executor Running' :
+                           selectedGoal.executor_status === 'waiting' ? 'Waiting for Answer' :
+                           'Resume Executor'}
+                        </span>
+                      </button>
+                    )}
                     <button
-                      onClick={() => setShowSpawnModal(true)}
-                      disabled={selectedGoal.executor_status === 'running' || selectedGoal.executor_status === 'waiting'}
-                      className="flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed px-4 py-2 rounded font-medium"
+                      onClick={() => fetchExecutorOutput(selectedGoal.id)}
+                      disabled={outputLoading}
+                      className="flex items-center gap-2 bg-gray-600 hover:bg-gray-500 disabled:bg-gray-700 px-4 py-2 rounded font-medium"
                     >
-                      <span>▶</span>
-                      <span>
-                        {selectedGoal.executor_status === 'running' ? 'Executor Running' :
-                         selectedGoal.executor_status === 'waiting' ? 'Waiting for Answer' :
-                         'Resume Executor'}
-                      </span>
+                      <span>📄</span>
+                      <span>{outputLoading ? 'Loading...' : 'View Output'}</span>
                     </button>
+                  </div>
+
+                  {/* Executor Output Panel */}
+                  {showOutput && (
+                    <div className="mt-4 bg-gray-900 border border-gray-700 rounded-lg">
+                      <div className="flex items-center justify-between p-3 border-b border-gray-700">
+                        <h4 className="text-sm font-medium text-gray-300">Executor Output</h4>
+                        <button
+                          onClick={() => setShowOutput(false)}
+                          className="text-gray-500 hover:text-gray-300"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <pre className="p-4 text-sm text-gray-300 overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap font-mono">
+                        {executorOutput || 'No output available'}
+                      </pre>
+                    </div>
                   )}
                 </div>
               </div>
