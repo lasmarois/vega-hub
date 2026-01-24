@@ -3,14 +3,16 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/lasmarois/vega-hub/internal/goals"
 	"github.com/lasmarois/vega-hub/internal/hub"
 )
 
 // RegisterRoutes sets up all API routes
-func RegisterRoutes(mux *http.ServeMux, h *hub.Hub) {
+func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, p *goals.Parser) {
 	mux.HandleFunc("/api/ask", corsMiddleware(handleAsk(h)))
 	mux.HandleFunc("/api/answer/", corsMiddleware(handleAnswer(h)))
 	mux.HandleFunc("/api/questions", corsMiddleware(handleQuestions(h)))
@@ -19,6 +21,8 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub) {
 	mux.HandleFunc("/api/executor/stop", corsMiddleware(handleExecutorStop(h)))
 	mux.HandleFunc("/api/events", handleSSE(h))
 	mux.HandleFunc("/api/health", handleHealth())
+	mux.HandleFunc("/api/goals", corsMiddleware(handleGoals(h, p)))
+	mux.HandleFunc("/api/goals/", corsMiddleware(handleGoalDetail(h, p)))
 }
 
 // AskRequest is the request body for POST /api/ask
@@ -230,4 +234,147 @@ func generateID() string {
 			time.Now().Format("20060102-150405.000"),
 			".", "-"),
 		":", "")
+}
+
+// GoalSummary combines registry goal with runtime status
+type GoalSummary struct {
+	goals.Goal
+	ExecutorStatus   string `json:"executor_status"` // "running", "waiting", "stopped", "none"
+	PendingQuestions int    `json:"pending_questions"`
+	ActiveExecutors  int    `json:"active_executors"`
+}
+
+// handleGoals handles GET /api/goals - lists all goals with runtime status
+func handleGoals(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse registry
+		registryGoals, err := p.ParseRegistry()
+		if err != nil {
+			http.Error(w, "Failed to parse registry: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Get runtime state
+		executors := h.GetActiveExecutors()
+		questions := h.GetPendingQuestions()
+
+		// Build executor and question maps by goal ID
+		executorsByGoal := make(map[int]int)
+		for _, e := range executors {
+			executorsByGoal[e.GoalID]++
+		}
+
+		questionsByGoal := make(map[int]int)
+		for _, q := range questions {
+			questionsByGoal[q.GoalID]++
+		}
+
+		// Build summaries
+		summaries := make([]GoalSummary, 0, len(registryGoals))
+		for _, g := range registryGoals {
+			summary := GoalSummary{
+				Goal:             g,
+				PendingQuestions: questionsByGoal[g.ID],
+				ActiveExecutors:  executorsByGoal[g.ID],
+			}
+
+			// Determine executor status
+			if questionsByGoal[g.ID] > 0 {
+				summary.ExecutorStatus = "waiting"
+			} else if executorsByGoal[g.ID] > 0 {
+				summary.ExecutorStatus = "running"
+			} else if g.Status == "active" {
+				summary.ExecutorStatus = "stopped"
+			} else {
+				summary.ExecutorStatus = "none"
+			}
+
+			summaries = append(summaries, summary)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(summaries)
+	}
+}
+
+// GoalDetailResponse combines goal detail with Q&A history
+type GoalDetailResponse struct {
+	*goals.GoalDetail
+	ExecutorStatus   string          `json:"executor_status"`
+	PendingQuestions []*hub.Question `json:"pending_questions"`
+	ActiveExecutors  []*hub.Executor `json:"active_executors"`
+}
+
+// handleGoalDetail handles GET /api/goals/:id - returns goal detail with Q&A
+func handleGoalDetail(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Extract ID from path
+		idStr := strings.TrimPrefix(r.URL.Path, "/api/goals/")
+		if idStr == "" {
+			http.Error(w, "Missing goal ID", http.StatusBadRequest)
+			return
+		}
+
+		id, err := strconv.Atoi(idStr)
+		if err != nil {
+			http.Error(w, "Invalid goal ID", http.StatusBadRequest)
+			return
+		}
+
+		// Parse goal detail
+		detail, err := p.ParseGoalDetail(id)
+		if err != nil {
+			http.Error(w, "Goal not found: "+err.Error(), http.StatusNotFound)
+			return
+		}
+
+		// Get runtime state for this goal
+		allExecutors := h.GetActiveExecutors()
+		allQuestions := h.GetPendingQuestions()
+
+		// Filter to this goal
+		var goalExecutors []*hub.Executor
+		for _, e := range allExecutors {
+			if e.GoalID == id {
+				goalExecutors = append(goalExecutors, e)
+			}
+		}
+
+		var goalQuestions []*hub.Question
+		for _, q := range allQuestions {
+			if q.GoalID == id {
+				goalQuestions = append(goalQuestions, q)
+			}
+		}
+
+		// Determine status
+		status := "none"
+		if len(goalQuestions) > 0 {
+			status = "waiting"
+		} else if len(goalExecutors) > 0 {
+			status = "running"
+		} else if detail.Status == "active" {
+			status = "stopped"
+		}
+
+		response := GoalDetailResponse{
+			GoalDetail:       detail,
+			ExecutorStatus:   status,
+			PendingQuestions: goalQuestions,
+			ActiveExecutors:  goalExecutors,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}
 }

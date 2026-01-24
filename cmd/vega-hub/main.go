@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/lasmarois/vega-hub/internal/api"
+	"github.com/lasmarois/vega-hub/internal/goals"
 	"github.com/lasmarois/vega-hub/internal/hub"
 )
 
@@ -27,12 +28,13 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Initialize the hub
+	// Initialize the hub and goals parser
 	h := hub.New(*dir)
+	p := goals.NewParser(*dir)
 
 	// Set up API routes
 	mux := http.NewServeMux()
-	api.RegisterRoutes(mux, h)
+	api.RegisterRoutes(mux, h, p)
 
 	// Serve static files from embedded filesystem
 	if isDev() {
