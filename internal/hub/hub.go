@@ -19,6 +19,9 @@ type Hub struct {
 	executors map[string]*Executor
 	mu        sync.RWMutex
 
+	// Spawn lock - prevents concurrent spawns for same goal
+	spawnMu sync.Mutex
+
 	// Channels for SSE broadcasting
 	subscribers map[chan Event]bool
 	subMu       sync.RWMutex

@@ -27,6 +27,23 @@ type SpawnResult struct {
 // It handles lifecycle tracking directly (register before start, stop on exit)
 // because Claude's -p mode doesn't fire SessionStart/Stop hooks reliably.
 func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
+	// Lock spawn to prevent concurrent spawns for same goal
+	h.spawnMu.Lock()
+	defer h.spawnMu.Unlock()
+
+	// Check if an executor is already running for this goal
+	h.mu.RLock()
+	for _, e := range h.executors {
+		if e.GoalID == req.GoalID {
+			h.mu.RUnlock()
+			return SpawnResult{
+				Success: false,
+				Message: fmt.Sprintf("Executor already running for Goal #%d (session: %s)", req.GoalID, e.SessionID),
+			}
+		}
+	}
+	h.mu.RUnlock()
+
 	// Find the worktree for this goal
 	worktree, err := h.findWorktree(req.GoalID)
 	if err != nil {
