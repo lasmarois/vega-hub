@@ -1,0 +1,18 @@
+# Build outputs
+dist/
+tmp/
+
+# Dependencies
+web/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+build-errors.log
