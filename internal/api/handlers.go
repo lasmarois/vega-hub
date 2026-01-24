@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -413,6 +414,8 @@ func handleGoalDetail(h *hub.Hub, p *goals.Parser, id int) http.HandlerFunc {
 // handleGoalSpawn handles POST /api/goals/:id/spawn - spawns an executor
 func handleGoalSpawn(h *hub.Hub, goalID int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[SPAWN] Received spawn request for Goal #%d from %s", goalID, r.RemoteAddr)
+
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -426,10 +429,14 @@ func handleGoalSpawn(h *hub.Hub, goalID int) http.HandlerFunc {
 			}
 		}
 
+		log.Printf("[SPAWN] Processing spawn for Goal #%d, context: %q", goalID, req.Context)
+
 		result := h.SpawnExecutor(hub.SpawnRequest{
 			GoalID:  goalID,
 			Context: req.Context,
 		})
+
+		log.Printf("[SPAWN] Result for Goal #%d: success=%v, message=%s", goalID, result.Success, result.Message)
 
 		w.Header().Set("Content-Type", "application/json")
 		if !result.Success {
