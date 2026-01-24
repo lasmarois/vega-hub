@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +24,8 @@ type SpawnResult struct {
 }
 
 // SpawnExecutor spawns a new Claude executor in the goal's worktree
+// It handles lifecycle tracking directly (register before start, stop on exit)
+// because Claude's -p mode doesn't fire SessionStart/Stop hooks reliably.
 func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 	// Find the worktree for this goal
 	worktree, err := h.findWorktree(req.GoalID)
@@ -33,6 +36,9 @@ func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 		}
 	}
 
+	// Generate session ID for tracking
+	sessionID := generateSessionID()
+
 	// Build the prompt
 	prompt := "Continue working on your assigned goal."
 	if req.Context != "" {
@@ -41,14 +47,17 @@ func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 
 	// Build the command
 	args := []string{
-		"--allowedTools", "Read,Write,Edit,Bash,Skill,Glob,Grep,Task",
+		"--allowedTools", "Read,Write,Edit,Bash,Skill,Glob,Grep,Task,AskUserQuestion",
 		"--permission-mode", "dontAsk",
 		"-p", prompt,
 	}
 
-	// Spawn Claude in the background using nohup
+	// Spawn Claude in the background
+	// exec.Command inherits environment from vega-hub process,
+	// so executor runs as the same user with same PATH/HOME/etc.
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = worktree
+	cmd.Env = os.Environ() // Explicitly inherit full environment
 
 	// Redirect output to log file
 	logFile := filepath.Join(worktree, ".executor-output.log")
@@ -72,17 +81,30 @@ func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 		}
 	}
 
-	// Don't wait - let it run in background
+	// Register executor with vega-hub (don't rely on hooks)
+	h.RegisterExecutor(req.GoalID, sessionID, worktree)
+
+	// Monitor process and notify when done
 	go func() {
 		cmd.Wait()
 		outFile.Close()
+		// Notify vega-hub that executor stopped
+		h.StopExecutor(req.GoalID, sessionID, "completed")
 	}()
 
 	return SpawnResult{
-		Success:  true,
-		Message:  fmt.Sprintf("Executor spawned for Goal #%d (PID: %d)", req.GoalID, cmd.Process.Pid),
-		Worktree: worktree,
+		Success:   true,
+		Message:   fmt.Sprintf("Executor spawned for Goal #%d (PID: %d)", req.GoalID, cmd.Process.Pid),
+		Worktree:  worktree,
+		SessionID: sessionID,
 	}
+}
+
+// generateSessionID creates a unique session identifier
+func generateSessionID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // findWorktree finds the worktree directory for a goal
