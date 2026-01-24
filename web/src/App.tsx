@@ -200,7 +200,9 @@ function App() {
         body: JSON.stringify({ context: spawnContext || undefined }),
       })
 
-      if (res.ok) {
+      const data = await res.json()
+
+      if (data.success) {
         setShowSpawnModal(false)
         setSpawnContext('')
         setExecutorOutput('')
@@ -209,7 +211,6 @@ function App() {
         fetchGoals()
         fetchGoalDetail(selectedGoal.id)
       } else {
-        const data = await res.json()
         alert('Failed to spawn executor: ' + data.message)
       }
     } catch (err) {
