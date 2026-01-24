@@ -62,14 +62,40 @@
   - web/src/App.tsx (same file as Phase 2)
 
 ### Phase 4: Polish & Integration
-- **Status:** in_progress
+- **Status:** complete
 - **Started:** 2026-01-24 21:05
+- **Completed:** 2026-01-24 21:05
 - Actions taken:
   - Loading states already included
-  - Need to verify build works
-  - Need to test with real executors
+  - Implementation committed
 - Files created/modified:
-  - (in progress)
+  - All files from phases 1-3
+
+### Phase 5: Executor Control Panel
+- **Status:** complete
+- **Started:** 2026-01-24 21:15
+- **Completed:** 2026-01-24 21:30
+- Actions taken:
+  - Added `SpawnExecutor()` method to Hub for spawning Claude CLI in background
+  - Added `GetGoalStatus()` method to Hub for reading planning files
+  - Created `internal/hub/spawn.go` - executor spawning with worktree discovery
+  - Created `internal/hub/status.go` - planning file parsing (task_plan.md, progress.md, findings.md)
+  - Added `POST /api/goals/{id}/spawn` endpoint for spawning executors
+  - Added `GET /api/goals/{id}/status` endpoint for reading planning file status
+  - Refactored `handleGoalRoutes` to route to spawn/status sub-endpoints
+  - Added Executor Control Panel UI section with:
+    - Phase progress bars showing task completion
+    - Recent actions from progress.md
+    - Active executor sessions display
+    - Resume button (▶) with disabled state when running/waiting
+  - Added spawn modal with context input text area
+  - Added auto-refresh of goal status every 5 seconds when executor is running
+- Files created/modified:
+  - internal/hub/spawn.go (created)
+  - internal/hub/status.go (created)
+  - internal/hub/hub.go (added Dir() method)
+  - internal/api/handlers.go (refactored routing, added spawn/status handlers)
+  - web/src/App.tsx (added Executor Control Panel UI)
 
 ## Test Results
 | Test | Input | Expected | Actual | Status |

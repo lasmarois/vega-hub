@@ -48,14 +48,15 @@ Phase 5 - Executor Control Panel
 - [x] Live progress - Auto-refresh from `progress.md`
 - **Status:** complete
 
-## Summary (Phases 1-4)
+## Summary
 
-Phases 1-4 complete. The goal-centric dashboard UI has been implemented with:
+All 5 phases complete. The vega-hub dashboard UI has been fully implemented with:
 
 1. **Backend API** (`/api/goals`, `/api/goals/{id}`) - Parses REGISTRY.md and goal files
 2. **Goal List View** - Split panel layout with status badges and notification counts
 3. **Goal Detail View** - Shows phases, Q&A, executors, overview, acceptance criteria
 4. **Real-time Updates** - SSE integration for all events (question, answered, executor_started/stopped)
+5. **Executor Control Panel** - Spawn executors from UI with optional context, live progress display
 
 Acceptance criteria status:
 - [x] UI shows all active goals from registry
@@ -64,6 +65,9 @@ Acceptance criteria status:
 - [x] Can answer questions from goal detail view
 - [x] Real-time updates when executors start/stop/ask
 - [x] Q&A history visible per goal (via pending_questions)
+- [x] Can spawn executor from UI with optional context
+- [x] Can view executor progress from planning files
+- [x] Live progress updates while executor running (auto-refresh every 5s)
 
 ## Key Questions
 1. How is the REGISTRY.md formatted? Need to parse it for goal list
