@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
+import { toast } from '@/hooks/useToast'
 
 export interface SSEHandlers {
   onQuestion?: () => void
@@ -11,20 +12,40 @@ export interface SSEHandlers {
   onGoalCompleted?: (data: { goal_id: string }) => void
 }
 
+const RECONNECT_DELAY = 3000 // 3 seconds
+
 export function useSSE(handlers: SSEHandlers) {
   const [connected, setConnected] = useState(false)
   const handlersRef = useRef(handlers)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const reconnectTimeoutRef = useRef<number | null>(null)
+  const wasConnectedRef = useRef(false)
 
   // Keep handlers ref updated
   useEffect(() => {
     handlersRef.current = handlers
   }, [handlers])
 
-  useEffect(() => {
+  const connect = useCallback(() => {
+    // Clean up existing connection
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+    }
+
     const eventSource = new EventSource('/api/events')
+    eventSourceRef.current = eventSource
 
     eventSource.addEventListener('connected', () => {
       setConnected(true)
+      // Show reconnected toast if we were previously connected
+      if (wasConnectedRef.current) {
+        toast({
+          title: 'Connected',
+          description: 'Reconnected to vega-hub',
+          variant: 'success',
+        })
+      }
+      wasConnectedRef.current = true
     })
 
     eventSource.addEventListener('question', () => {
@@ -67,12 +88,39 @@ export function useSSE(handlers: SSEHandlers) {
 
     eventSource.onerror = () => {
       setConnected(false)
-    }
-
-    return () => {
       eventSource.close()
+
+      // Show disconnected toast only if we were connected before
+      if (wasConnectedRef.current) {
+        toast({
+          title: 'Disconnected',
+          description: 'Lost connection to vega-hub. Reconnecting...',
+          variant: 'destructive',
+        })
+      }
+
+      // Schedule reconnect
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+      }
+      reconnectTimeoutRef.current = window.setTimeout(() => {
+        connect()
+      }, RECONNECT_DELAY)
     }
   }, [])
+
+  useEffect(() => {
+    connect()
+
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+      }
+    }
+  }, [connect])
 
   return { connected }
 }

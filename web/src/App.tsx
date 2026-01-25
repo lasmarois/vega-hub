@@ -27,6 +27,9 @@ function AppContent() {
 
   const {
     activities,
+    unreadCount,
+    markAsRead,
+    markAllAsRead,
     recordExecutorStarted,
     recordExecutorStopped,
     recordQuestion,
@@ -181,7 +184,17 @@ function AppContent() {
   return (
     <>
       <Routes>
-        <Route element={<Layout connected={connected} pendingQuestions={totalPendingQuestions} />}>
+        <Route element={
+          <Layout
+            connected={connected}
+            pendingQuestions={totalPendingQuestions}
+            activities={activities}
+            unreadCount={unreadCount}
+            onMarkAsRead={markAsRead}
+            onMarkAllAsRead={markAllAsRead}
+            onGoalClick={handleGoalClick}
+          />
+        }>
           <Route
             path="/"
             element={

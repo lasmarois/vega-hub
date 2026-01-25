@@ -11,8 +11,29 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Target, ChevronDown } from 'lucide-react'
+import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 import type { GoalSummary } from '@/lib/types'
+
+// Parse phase string like "2/4", "1/?", or "Phase 2" into { current, total }
+function parsePhase(phase: string): { current: number; total: number } | null {
+  // Try "X/Y" format (e.g., "2/4")
+  const slashMatch = phase.match(/(\d+)\s*\/\s*(\d+)/)
+  if (slashMatch) {
+    return { current: parseInt(slashMatch[1]), total: parseInt(slashMatch[2]) }
+  }
+  // Try "X/?" format (e.g., "1/?") - unknown total
+  const unknownMatch = phase.match(/(\d+)\s*\/\s*\?/)
+  if (unknownMatch) {
+    return { current: parseInt(unknownMatch[1]), total: 0 }
+  }
+  // Try "Phase X" format
+  const phaseMatch = phase.match(/phase\s*(\d+)/i)
+  if (phaseMatch) {
+    return { current: parseInt(phaseMatch[1]), total: 0 }
+  }
+  return null
+}
 
 interface GoalsProps {
   goals: GoalSummary[]
@@ -162,6 +183,8 @@ export function Goals({ goals, loading, onGoalClick }: GoalsProps) {
 }
 
 function GoalCard({ goal, onClick }: { goal: GoalSummary; onClick: () => void }) {
+  const phaseInfo = parsePhase(goal.phase)
+
   return (
     <Card
       className={cn(
@@ -205,12 +228,17 @@ function GoalCard({ goal, onClick }: { goal: GoalSummary; onClick: () => void })
       </CardHeader>
       <CardContent className="p-4 pt-0">
         <p className="text-sm mb-2">{goal.title}</p>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span>Phase: {goal.phase}</span>
+        <div className="flex items-center gap-3 text-xs text-muted-foreground mb-2">
           {goal.projects.length > 0 && (
             <span>{goal.projects.join(', ')}</span>
           )}
         </div>
+        {/* Progress Bar */}
+        {phaseInfo && phaseInfo.total > 0 ? (
+          <Progress value={phaseInfo.current} max={phaseInfo.total} showLabel />
+        ) : (
+          <div className="text-xs text-muted-foreground">Phase: {goal.phase}</div>
+        )}
       </CardContent>
     </Card>
   )

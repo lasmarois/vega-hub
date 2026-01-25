@@ -106,7 +106,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
       <SheetContent
         side={isDesktop ? 'right' : 'bottom'}
         className={cn(
-          'p-0 flex flex-col',
+          'p-0 flex flex-col overflow-hidden',
           isDesktop ? 'w-[480px] sm:max-w-[480px]' : 'h-[90vh]'
         )}
       >
@@ -189,7 +189,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
         </div>
 
         {/* Tabs Content */}
-        <Tabs defaultValue="overview" className="flex-1 flex flex-col">
+        <Tabs defaultValue="overview" className="flex-1 flex flex-col overflow-hidden">
           <TabsList className="w-full justify-start rounded-none border-b bg-transparent p-0 h-auto">
             <TabsTrigger
               value="overview"
@@ -228,7 +228,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
             </TabsTrigger>
           </TabsList>
 
-          <ScrollArea className="flex-1">
+          <ScrollArea className="flex-1 min-h-0">
             <TabsContent value="overview" className="p-4 m-0">
               {goal.overview && (
                 <div className="mb-4">
