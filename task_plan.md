@@ -103,3 +103,34 @@ Redesign vega-hub UI to surface all vega-missile data (registry, projects, goals
 | 1 | web/package.json, web/tailwind.config.js, web/components.json, web/tsconfig.json, web/vite.config.ts, web/src/index.css, web/src/App.tsx, web/src/lib/utils.ts, web/src/lib/types.ts, web/src/components/ui/*, web/src/components/layout/*, web/src/components/goals/*, web/src/pages/*, web/src/hooks/* |
 | 2-3 | web/src/lib/types.ts, web/src/hooks/useActivity.ts, web/src/hooks/index.ts, web/src/components/shared/*, web/src/components/projects/*, web/src/components/ui/select.tsx, web/src/pages/Home.tsx, web/src/pages/Goals.tsx, web/src/pages/Projects.tsx, web/src/components/goals/GoalSheet.tsx, web/src/App.tsx |
 | 4 | web/src/components/ui/dialog.tsx, web/src/components/ui/command.tsx, web/src/components/ui/toast.tsx, web/src/components/ui/toaster.tsx, web/src/components/shared/CommandPalette.tsx, web/src/hooks/useToast.ts, web/src/App.tsx |
+
+---
+
+## Phase 5: Testing & Bug Fixes [in_progress]
+
+### Bug Fixes Applied
+- [x] GoalSheet: Add SheetTitle for accessibility warning (344b7f3)
+- [x] GoalSheet: Add null checks for pending_questions (344b7f3)
+- [x] GoalSheet: Add expandable sidebar (Maximize/Minimize toggle) for desktop
+
+### Known Issues
+| Issue | Priority | Status | Notes |
+|-------|----------|--------|-------|
+| | | | |
+
+### Ideas to Discuss
+| Idea | Priority | Notes |
+|------|----------|-------|
+| | | |
+
+### Testing Checklist
+- [x] Home page loads correctly
+- [x] Goal detail sheet opens (fixed)
+- [ ] Goals list with filters
+- [ ] Projects page shows projects
+- [ ] Project detail sheet works
+- [ ] History page with search
+- [ ] Command palette (Cmd+K)
+- [ ] Mobile viewport (responsive)
+- [ ] SSE real-time updates
+- [ ] Toast notifications

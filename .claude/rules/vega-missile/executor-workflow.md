@@ -27,9 +27,14 @@ This design enables future remote execution - executors don't need direct filesy
 
 | Hook | What It Does |
 |------|--------------|
-| `SessionStart` | Registers with vega-hub, receives goal context |
+| `SessionStart` | Checks skill dependencies, injects goal context |
 | `PreToolUse` (AskUserQuestion) | Routes questions to vega-hub, blocks until answered |
 | `Stop` | Notifies vega-hub that executor stopped |
+
+The SessionStart hook:
+1. Checks if `planning-with-files` skill is installed
+2. Warns with install instructions if missing
+3. Injects goal context and reminders
 
 All hooks communicate with vega-hub via HTTP. vega-hub handles markdown writes, SSE events, and notifications.
 
@@ -45,6 +50,19 @@ You can ask the human questions directly using `AskUserQuestion`. The hook inter
 6. vega-hub logs Q&A to goal markdown
 
 **Use this when you need clarification** - don't guess or make assumptions.
+
+## Required Skill: planning-with-files
+
+The `planning-with-files` skill is **REQUIRED** for vega-missile executors.
+
+**Install with:**
+```bash
+claude plugins install OthmanAdi/planning-with-files
+```
+
+Source: https://github.com/OthmanAdi/planning-with-files
+
+If the skill is missing, the SessionStart hook will warn you with installation instructions.
 
 ## Executor Session Checklist
 

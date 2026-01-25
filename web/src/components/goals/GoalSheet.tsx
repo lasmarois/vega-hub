@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, AlertCircle, CheckCircle2, Circle, MessageSquare, BookOpen, Clock } from 'lucide-react'
+import { Play, FileText, AlertCircle, CheckCircle2, Circle, MessageSquare, BookOpen, Clock, Maximize2, Minimize2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus, Question } from '@/lib/types'
 
@@ -33,6 +33,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
   const [spawning, setSpawning] = useState(false)
   const [showSpawnInput, setShowSpawnInput] = useState(false)
   const [spawnContext, setSpawnContext] = useState('')
+  const [expanded, setExpanded] = useState(false)
 
   const handleAnswer = async (questionId: string) => {
     const answer = answerText[questionId]
@@ -106,14 +107,34 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
       <SheetContent
         side={isDesktop ? 'right' : 'bottom'}
         className={cn(
-          'p-0 flex flex-col overflow-hidden',
-          isDesktop ? 'w-[480px] sm:max-w-[480px]' : 'h-[90vh]'
+          'p-0 flex flex-col overflow-hidden transition-all duration-300',
+          isDesktop
+            ? expanded
+              ? 'w-[90vw] sm:max-w-[90vw]'
+              : 'w-[480px] sm:max-w-[480px]'
+            : 'h-[90vh]'
         )}
       >
         {/* Sticky Header */}
         <div className="sticky top-0 z-10 bg-background border-b p-4">
           <SheetHeader className="text-left">
             <div className="flex items-center gap-2">
+              {/* Expand/Collapse button - desktop only */}
+              {isDesktop && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={() => setExpanded(!expanded)}
+                  title={expanded ? 'Collapse' : 'Expand'}
+                >
+                  {expanded ? (
+                    <Minimize2 className="h-4 w-4" />
+                  ) : (
+                    <Maximize2 className="h-4 w-4" />
+                  )}
+                </Button>
+              )}
               <div className={cn(
                 'h-2 w-2 rounded-full',
                 goal.executor_status === 'running' ? 'bg-green-500 animate-pulse' :
