@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2025-01-25
+## [0.3.0] - 2026-01-25
+
+### Added
+- Cobra CLI framework for subcommand support
+- `vega-hub serve` command (HTTP server in foreground)
+- `vega-hub start` command (daemon mode with automatic port selection)
+- `vega-hub status` command (check if daemon is running)
+- Global `--json` flag for structured JSON output
+- Global `--quiet` flag for minimal output
+- Global `--dir` flag to specify vega-missile directory
+- AI-friendly error handling with exit codes and actionable messages
+
+### Changed
+- Refactored main.go to use Cobra root command
+- Default behavior now shows help (use `serve` or `start` to run server)
+
+## [0.2.0] - 2026-01-25
 
 ### Added
 - Mobile-first responsive UI with shadcn components
