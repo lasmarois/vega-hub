@@ -57,6 +57,7 @@ func runServe(cmd *cobra.Command, args []string) {
 
 	// Initialize the hub and goals parser
 	h := hub.New(dir)
+	h.SetPort(servePort) // Store port for executor env injection
 	p := goals.NewParser(dir)
 
 	// Start file watcher for real-time updates

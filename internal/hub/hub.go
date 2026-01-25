@@ -15,6 +15,7 @@ import (
 // Hub manages the state of pending questions and executor sessions
 type Hub struct {
 	dir       string
+	port      int // Port vega-hub is running on (for executor env injection)
 	questions map[string]*Question
 	executors map[string]*Executor
 	mu        sync.RWMutex
@@ -73,6 +74,16 @@ func New(dir string) *Hub {
 		subscribers: make(map[chan Event]bool),
 		mdWriter:    markdown.NewWriter(dir),
 	}
+}
+
+// SetPort sets the port vega-hub is running on (for executor env injection)
+func (h *Hub) SetPort(port int) {
+	h.port = port
+}
+
+// GetPort returns the port vega-hub is running on
+func (h *Hub) GetPort() int {
+	return h.port
 }
 
 // RegisterExecutor registers a new executor session and returns context

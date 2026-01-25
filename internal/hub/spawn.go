@@ -85,7 +85,14 @@ func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 	// so executor runs as the same user with same PATH/HOME/etc.
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = worktree
-	cmd.Env = os.Environ() // Explicitly inherit full environment
+
+	// Build environment: inherit current env + inject VEGA_HUB_PORT
+	// This allows executor hooks to communicate with vega-hub
+	env := os.Environ()
+	if h.port > 0 {
+		env = append(env, fmt.Sprintf("VEGA_HUB_PORT=%d", h.port))
+	}
+	cmd.Env = env
 
 	// Redirect output to log file
 	logFile := filepath.Join(worktree, ".executor-output.log")

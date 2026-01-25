@@ -54,6 +54,24 @@ func runStart(cmd *cobra.Command, args []string) {
 		})
 	}
 
+	// Acquire startup lock to prevent race conditions
+	// Lock timeout: 30 seconds (generous for slow systems)
+	lockFile := filepath.Join(dir, ".vega-hub.lock")
+	lock, err := acquireLock(lockFile, 30*time.Second)
+	if err != nil {
+		cli.OutputError(cli.ExitConflict, "lock_failed",
+			"Could not acquire startup lock (another process may be starting)",
+			map[string]string{
+				"lock_file": lockFile,
+				"error":     err.Error(),
+			},
+			[]cli.ErrorOption{
+				{Action: "wait", Description: "Wait and retry"},
+				{Action: "remove", Description: fmt.Sprintf("Remove stale lock: rm %s", lockFile)},
+			})
+	}
+	defer releaseLock(lock, lockFile)
+
 	// Check if already running
 	if result, running := checkRunning(dir); running {
 		cli.OutputSuccess("already_running", "vega-hub is already running", result)
@@ -218,4 +236,42 @@ func writePortFile(dir string, port int) error {
 		[]byte(strconv.Itoa(port)+"\n"),
 		0644,
 	)
+}
+
+// acquireLock attempts to acquire an exclusive lock file
+// Returns the file handle (for later release) or error if lock cannot be acquired
+func acquireLock(lockFile string, timeout time.Duration) (*os.File, error) {
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		// Try to create lock file exclusively
+		f, err := os.OpenFile(lockFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if err == nil {
+			// Write our PID to the lock file
+			fmt.Fprintf(f, "%d\n", os.Getpid())
+			return f, nil
+		}
+
+		// Check if lock is stale (older than 60 seconds)
+		if info, statErr := os.Stat(lockFile); statErr == nil {
+			if time.Since(info.ModTime()) > 60*time.Second {
+				// Stale lock, remove and retry
+				os.Remove(lockFile)
+				continue
+			}
+		}
+
+		// Wait and retry
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return nil, fmt.Errorf("could not acquire lock within %v", timeout)
+}
+
+// releaseLock releases the lock file
+func releaseLock(f *os.File, lockFile string) {
+	if f != nil {
+		f.Close()
+	}
+	os.Remove(lockFile)
 }
