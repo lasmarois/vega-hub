@@ -90,6 +90,9 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
         <SheetContent side={isDesktop ? 'right' : 'bottom'} className={cn(
           isDesktop ? 'w-[480px] sm:max-w-[480px]' : 'h-[90vh]'
         )}>
+          <SheetHeader>
+            <SheetTitle>Loading...</SheetTitle>
+          </SheetHeader>
           <div className="flex items-center justify-center h-full">
             <Skeleton className="h-48 w-full" />
           </div>
@@ -205,7 +208,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
               className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2 relative"
             >
               Q&A
-              {goal.pending_questions.length > 0 && (
+              {goal.pending_questions && goal.pending_questions.length > 0 && (
                 <Badge variant="destructive" className="ml-1.5 h-5 px-1.5">
                   {goal.pending_questions.length}
                 </Badge>
@@ -313,7 +316,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
             </TabsContent>
 
             <TabsContent value="qa" className="p-4 m-0">
-              {goal.pending_questions && goal.pending_questions.length > 0 ? (
+              {goal.pending_questions?.length > 0 ? (
                 <div className="space-y-4">
                   <h4 className="font-medium flex items-center gap-2 text-destructive">
                     <AlertCircle className="h-4 w-4" />
