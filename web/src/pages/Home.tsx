@@ -1,17 +1,20 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Target, Snowflake, CheckCircle2, FolderOpen, AlertCircle } from 'lucide-react'
-import type { GoalSummary } from '@/lib/types'
+import { Target, Snowflake, CheckCircle2, FolderOpen, AlertCircle, Activity } from 'lucide-react'
+import { ActivityItem } from '@/components/shared/ActivityItem'
+import { EmptyState } from '@/components/shared/EmptyState'
+import type { GoalSummary, Activity as ActivityType } from '@/lib/types'
 
 interface HomeProps {
   goals: GoalSummary[]
   loading: boolean
   pendingQuestions: number
+  activities: ActivityType[]
   onGoalClick: (id: string) => void
 }
 
-export function Home({ goals, loading, pendingQuestions, onGoalClick }: HomeProps) {
+export function Home({ goals, loading, pendingQuestions, activities, onGoalClick }: HomeProps) {
   const activeGoals = goals.filter(g => g.status === 'active')
   const icedGoals = goals.filter(g => g.status === 'iced')
   const completedGoals = goals.filter(g => g.status === 'completed')
@@ -157,6 +160,33 @@ export function Home({ goals, loading, pendingQuestions, onGoalClick }: HomeProp
             ))}
           </div>
         )}
+      </section>
+
+      {/* Recent Activity */}
+      <section>
+        <h2 className="text-lg font-semibold mb-4">Recent Activity</h2>
+        <Card>
+          <CardContent className="p-4">
+            {activities.length === 0 ? (
+              <EmptyState
+                icon={Activity}
+                title="No recent activity"
+                description="Activity from executors will appear here"
+                className="py-6"
+              />
+            ) : (
+              <div className="divide-y divide-border">
+                {activities.slice(0, 10).map((activity) => (
+                  <ActivityItem
+                    key={activity.id}
+                    activity={activity}
+                    onClick={activity.goal_id ? () => onGoalClick(activity.goal_id!) : undefined}
+                  />
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </section>
     </div>
   )

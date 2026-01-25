@@ -68,3 +68,12 @@ export interface SSEEvent {
   type: string
   data?: Record<string, unknown>
 }
+
+export interface Activity {
+  id: string
+  type: 'executor_started' | 'executor_stopped' | 'question' | 'answered' | 'goal_updated' | 'goal_iced' | 'goal_completed'
+  goal_id?: string
+  session_id?: string
+  message: string
+  timestamp: string
+}

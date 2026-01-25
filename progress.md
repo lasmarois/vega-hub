@@ -64,8 +64,44 @@
 - TypeScript compiles without errors
 - Frontend bundles to 309KB gzip: 92KB
 
-### In Progress
-- Commit Phase 1 work
+### Blockers
+None
+
+---
+
+## Session 2 - 2026-01-24
+
+### Phase 2-3: Core Views & Projects - COMPLETE
+
+**Activity Timeline:**
+- Created Activity type in lib/types.ts
+- Created useActivity.ts hook to capture SSE events
+- Integrated activity recording with SSE event handlers in App.tsx
+- Added activity timeline to Home dashboard
+
+**Shared Components:**
+- StatusBadge.tsx - unified status badge with variant mapping
+- ActivityItem.tsx - activity feed item with icon, message, time ago
+- EmptyState.tsx - reusable empty state with icon, title, description
+
+**Goals List Enhancements:**
+- Added sort dropdown (newest, oldest, status, questions)
+- Created select.tsx shadcn component
+
+**GoalSheet Enhancements:**
+- Added Planning tab showing phase progress, task plan, findings, worktree info
+- Added Timeline tab showing recent actions and progress log
+- Now uses goalStatus prop for live data
+
+**Projects:**
+- Created ProjectSheet.tsx with tabs (Active, Iced, Completed)
+- Added project click handling to Projects page
+- Integrated ProjectSheet into App.tsx
+
+**Build verified:**
+- Docker build successful
+- TypeScript compiles without errors
+- Frontend bundles to 381KB gzip: 113KB
 
 ### Blockers
 None
@@ -97,11 +133,11 @@ src/
 ├── components/
 │   ├── layout/       # Header, Sidebar, BottomNav, Layout
 │   ├── goals/        # GoalSheet
-│   ├── projects/     # (future)
-│   ├── shared/       # (future: StatusBadge, ActivityItem)
+│   ├── projects/     # ProjectSheet
+│   ├── shared/       # StatusBadge, ActivityItem, EmptyState
 │   └── ui/           # shadcn components
 ├── pages/            # Home, Goals, Projects, History
-├── hooks/            # useSSE, useGoals, useMobile
+├── hooks/            # useSSE, useGoals, useMobile, useActivity
 └── lib/              # utils, types
 ```
 

@@ -1,8 +1,15 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Target, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalSummary } from '@/lib/types'
@@ -14,9 +21,11 @@ interface GoalsProps {
 }
 
 type FilterType = 'all' | 'active' | 'iced' | 'completed'
+type SortType = 'newest' | 'oldest' | 'status' | 'questions'
 
 export function Goals({ goals, loading, onGoalClick }: GoalsProps) {
   const [filter, setFilter] = useState<FilterType>('all')
+  const [sort, setSort] = useState<SortType>('newest')
   const [showCompleted, setShowCompleted] = useState(false)
 
   const filterOptions: { value: FilterType; label: string; count: number }[] = [
@@ -30,8 +39,31 @@ export function Goals({ goals, loading, onGoalClick }: GoalsProps) {
     ? goals
     : goals.filter(g => g.status === filter)
 
-  const activeAndIcedGoals = filteredGoals.filter(g => g.status !== 'completed')
-  const completedGoals = filteredGoals.filter(g => g.status === 'completed')
+  const sortedGoals = useMemo(() => {
+    const sorted = [...filteredGoals]
+    switch (sort) {
+      case 'newest':
+        // Assuming goals are added with increasing IDs or we'd need a created_at field
+        sorted.reverse()
+        break
+      case 'oldest':
+        // Keep original order
+        break
+      case 'status':
+        sorted.sort((a, b) => {
+          const statusOrder = { running: 0, waiting: 1, stopped: 2, idle: 3 }
+          return (statusOrder[a.executor_status] || 3) - (statusOrder[b.executor_status] || 3)
+        })
+        break
+      case 'questions':
+        sorted.sort((a, b) => b.pending_questions - a.pending_questions)
+        break
+    }
+    return sorted
+  }, [filteredGoals, sort])
+
+  const activeAndIcedGoals = sortedGoals.filter(g => g.status !== 'completed')
+  const completedGoals = sortedGoals.filter(g => g.status === 'completed')
 
   if (loading) {
     return (
@@ -52,22 +84,35 @@ export function Goals({ goals, loading, onGoalClick }: GoalsProps) {
     <div className="p-4 space-y-4">
       <h1 className="text-2xl font-bold">Goals</h1>
 
-      {/* Filter Chips */}
-      <div className="flex flex-wrap gap-2">
-        {filterOptions.map(option => (
-          <Button
-            key={option.value}
-            variant={filter === option.value ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setFilter(option.value)}
-            className="gap-1.5"
-          >
-            {option.label}
-            <Badge variant={filter === option.value ? 'secondary' : 'outline'} className="ml-1">
-              {option.count}
-            </Badge>
-          </Button>
-        ))}
+      {/* Filter Chips & Sort */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap gap-2">
+          {filterOptions.map(option => (
+            <Button
+              key={option.value}
+              variant={filter === option.value ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setFilter(option.value)}
+              className="gap-1.5"
+            >
+              {option.label}
+              <Badge variant={filter === option.value ? 'secondary' : 'outline'} className="ml-1">
+                {option.count}
+              </Badge>
+            </Button>
+          ))}
+        </div>
+        <Select value={sort} onValueChange={(v) => setSort(v as SortType)}>
+          <SelectTrigger className="w-[140px]">
+            <SelectValue placeholder="Sort by" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="newest">Newest</SelectItem>
+            <SelectItem value="oldest">Oldest</SelectItem>
+            <SelectItem value="status">Status</SelectItem>
+            <SelectItem value="questions">Questions</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Goals List */}

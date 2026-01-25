@@ -14,7 +14,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useMobile } from '@/hooks/useMobile'
-import { Play, FileText, AlertCircle, CheckCircle2, Circle, MessageSquare } from 'lucide-react'
+import { EmptyState } from '@/components/shared/EmptyState'
+import { Play, FileText, AlertCircle, CheckCircle2, Circle, MessageSquare, BookOpen, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus, Question } from '@/lib/types'
 
@@ -26,7 +27,7 @@ interface GoalSheetProps {
   onRefresh: () => void
 }
 
-export function GoalSheet({ open, onOpenChange, goal, onRefresh }: GoalSheetProps) {
+export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: GoalSheetProps) {
   const { isDesktop } = useMobile()
   const [answerText, setAnswerText] = useState<Record<string, string>>({})
   const [spawning, setSpawning] = useState(false)
@@ -210,6 +211,18 @@ export function GoalSheet({ open, onOpenChange, goal, onRefresh }: GoalSheetProp
                 </Badge>
               )}
             </TabsTrigger>
+            <TabsTrigger
+              value="planning"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2"
+            >
+              Planning
+            </TabsTrigger>
+            <TabsTrigger
+              value="timeline"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2"
+            >
+              Timeline
+            </TabsTrigger>
           </TabsList>
 
           <ScrollArea className="flex-1">
@@ -322,6 +335,129 @@ export function GoalSheet({ open, onOpenChange, goal, onRefresh }: GoalSheetProp
                   <p>No pending questions</p>
                   <p className="text-sm">Questions from executors will appear here</p>
                 </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="planning" className="p-4 m-0">
+              {goalStatus && goalStatus.has_worktree ? (
+                <div className="space-y-4">
+                  {/* Current Phase */}
+                  {goalStatus.current_phase && (
+                    <div>
+                      <h4 className="font-medium mb-2">Current Phase</h4>
+                      <p className="text-sm text-muted-foreground">{goalStatus.current_phase}</p>
+                    </div>
+                  )}
+
+                  {/* Phase Progress */}
+                  {goalStatus.phase_progress && goalStatus.phase_progress.length > 0 && (
+                    <div>
+                      <h4 className="font-medium mb-2">Phase Progress</h4>
+                      <div className="space-y-2">
+                        {goalStatus.phase_progress.map((phase) => (
+                          <div key={phase.number} className="flex items-center gap-3">
+                            <Badge variant={
+                              phase.status === 'complete' ? 'success' :
+                              phase.status === 'in_progress' ? 'default' :
+                              'secondary'
+                            } className="w-20 justify-center">
+                              {phase.status}
+                            </Badge>
+                            <span className="text-sm flex-1">
+                              Phase {phase.number}: {phase.title}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {phase.tasks_done}/{phase.tasks_total}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Task Plan Preview */}
+                  {goalStatus.task_plan && (
+                    <div>
+                      <h4 className="font-medium mb-2">Task Plan</h4>
+                      <Card>
+                        <CardContent className="p-3">
+                          <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-48 overflow-auto">
+                            {goalStatus.task_plan.slice(0, 1000)}
+                            {goalStatus.task_plan.length > 1000 && '...'}
+                          </pre>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
+                  {/* Findings Preview */}
+                  {goalStatus.findings && (
+                    <div>
+                      <h4 className="font-medium mb-2">Findings</h4>
+                      <Card>
+                        <CardContent className="p-3">
+                          <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-48 overflow-auto">
+                            {goalStatus.findings.slice(0, 1000)}
+                            {goalStatus.findings.length > 1000 && '...'}
+                          </pre>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
+                  {/* Worktree Path */}
+                  {goalStatus.worktree_path && (
+                    <div>
+                      <h4 className="font-medium mb-2">Worktree</h4>
+                      <code className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
+                        {goalStatus.worktree_path}
+                      </code>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <EmptyState
+                  icon={BookOpen}
+                  title="No planning files"
+                  description="Planning files will appear when an executor is working on this goal"
+                />
+              )}
+            </TabsContent>
+
+            <TabsContent value="timeline" className="p-4 m-0">
+              {goalStatus && goalStatus.recent_actions && goalStatus.recent_actions.length > 0 ? (
+                <div className="space-y-4">
+                  <h4 className="font-medium">Recent Actions</h4>
+                  <div className="space-y-2">
+                    {goalStatus.recent_actions.map((action, i) => (
+                      <div key={i} className="flex items-start gap-3 py-2 border-b border-border last:border-0">
+                        <Clock className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                        <span className="text-sm">{action}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Progress Log Preview */}
+                  {goalStatus.progress_log && (
+                    <div className="mt-4">
+                      <h4 className="font-medium mb-2">Progress Log</h4>
+                      <Card>
+                        <CardContent className="p-3">
+                          <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-48 overflow-auto">
+                            {goalStatus.progress_log.slice(0, 1500)}
+                            {goalStatus.progress_log.length > 1500 && '...'}
+                          </pre>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <EmptyState
+                  icon={Clock}
+                  title="No timeline data"
+                  description="Activity timeline will appear when an executor starts working"
+                />
               )}
             </TabsContent>
           </ScrollArea>

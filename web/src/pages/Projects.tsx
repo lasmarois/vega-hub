@@ -3,19 +3,20 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { FolderOpen, Target, Snowflake, CheckCircle2 } from 'lucide-react'
 import type { GoalSummary } from '@/lib/types'
 
-interface ProjectsProps {
-  goals: GoalSummary[]
-  loading: boolean
-}
-
-interface ProjectStats {
+export interface ProjectStats {
   name: string
   active: number
   iced: number
   completed: number
 }
 
-export function Projects({ goals, loading }: ProjectsProps) {
+interface ProjectsProps {
+  goals: GoalSummary[]
+  loading: boolean
+  onProjectClick: (project: ProjectStats) => void
+}
+
+export function Projects({ goals, loading, onProjectClick }: ProjectsProps) {
   // Derive projects from goals
   const projectMap = new Map<string, ProjectStats>()
 
@@ -61,7 +62,11 @@ export function Projects({ goals, loading }: ProjectsProps) {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           {projects.map(project => (
-            <Card key={project.name} className="cursor-pointer hover:bg-accent/50 transition-colors">
+            <Card
+              key={project.name}
+              className="cursor-pointer hover:bg-accent/50 transition-colors"
+              onClick={() => onProjectClick(project)}
+            >
               <CardHeader className="p-4 pb-2">
                 <div className="flex items-center gap-2">
                   <FolderOpen className="h-5 w-5 text-muted-foreground" />

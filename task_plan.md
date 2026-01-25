@@ -39,36 +39,36 @@ Redesign vega-hub UI to surface all vega-missile data (registry, projects, goals
 
 ---
 
-## Phase 2: Core Views [pending]
+## Phase 2: Core Views [complete]
 
 ### Tasks
-- [ ] Home dashboard with:
+- [x] Home dashboard with:
   - [x] Alert banner for pending questions
   - [x] Stats row (Active, Iced, Completed, Projects)
   - [x] Active goals cards (max 5)
-  - [ ] Recent activity timeline
-- [ ] Goals list with:
+  - [x] Recent activity timeline
+- [x] Goals list with:
   - [x] Filter chips (All, Active, Iced, Completed)
-  - [ ] Sort dropdown
+  - [x] Sort dropdown
   - [x] GoalCard.tsx component (inline in Goals page)
 - [x] GoalSheet.tsx (bottom sheet mobile, right sheet desktop)
   - [x] Sticky header with goal info
   - [x] Tabs: Overview, Phases, Q&A
-  - [ ] Add Planning and Timeline tabs
-- [ ] Shared components:
-  - [ ] StatusBadge.tsx
-  - [ ] ActivityItem.tsx
-  - [ ] EmptyState.tsx
+  - [x] Add Planning and Timeline tabs
+- [x] Shared components:
+  - [x] StatusBadge.tsx
+  - [x] ActivityItem.tsx
+  - [x] EmptyState.tsx
 
 ---
 
-## Phase 3: Projects & History [pending]
+## Phase 3: Projects & History [complete]
 
 ### Tasks
 - [x] Projects view with ProjectCard (inline)
-- [ ] ProjectSheet.tsx with tabs
+- [x] ProjectSheet.tsx with tabs
 - [x] History view with search
-- [ ] New API endpoints (backend):
+- [ ] New API endpoints (backend) - deferred to separate goal:
   - [ ] GET /api/projects
   - [ ] GET /api/projects/{name}
   - [ ] GET /api/goals/{id}/planning
@@ -92,6 +92,7 @@ Redesign vega-hub UI to surface all vega-missile data (registry, projects, goals
 | Error | Attempt | Resolution |
 |-------|---------|------------|
 | TS6133: unused imports | 1 | Removed unused navigate, Snowflake, CardDescription, Badge imports |
+| TS6133: unused data param | 2 | Removed unused data parameter from handleAnswered callback |
 
 ---
 
@@ -100,3 +101,4 @@ Redesign vega-hub UI to surface all vega-missile data (registry, projects, goals
 | Phase | Files |
 |-------|-------|
 | 1 | web/package.json, web/tailwind.config.js, web/components.json, web/tsconfig.json, web/vite.config.ts, web/src/index.css, web/src/App.tsx, web/src/lib/utils.ts, web/src/lib/types.ts, web/src/components/ui/*, web/src/components/layout/*, web/src/components/goals/*, web/src/pages/*, web/src/hooks/* |
+| 2-3 | web/src/lib/types.ts, web/src/hooks/useActivity.ts, web/src/hooks/index.ts, web/src/components/shared/*, web/src/components/projects/*, web/src/components/ui/select.tsx, web/src/pages/Home.tsx, web/src/pages/Goals.tsx, web/src/pages/Projects.tsx, web/src/components/goals/GoalSheet.tsx, web/src/App.tsx |

@@ -2,9 +2,12 @@ import { useEffect, useCallback, useState } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from '@/components/layout'
 import { Home, Goals, Projects, History } from '@/pages'
+import type { ProjectStats } from '@/pages/Projects'
 import { useSSE } from '@/hooks/useSSE'
 import { useGoals } from '@/hooks/useGoals'
+import { useActivity } from '@/hooks/useActivity'
 import { GoalSheet } from '@/components/goals/GoalSheet'
+import { ProjectSheet } from '@/components/projects/ProjectSheet'
 
 function AppContent() {
   const {
@@ -19,43 +22,71 @@ function AppContent() {
     clearSelectedGoal,
   } = useGoals()
 
+  const {
+    activities,
+    recordExecutorStarted,
+    recordExecutorStopped,
+    recordQuestion,
+    recordAnswered,
+    recordGoalUpdated,
+    recordGoalIced,
+    recordGoalCompleted,
+  } = useActivity()
+
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [projectSheetOpen, setProjectSheetOpen] = useState(false)
+  const [selectedProject, setSelectedProject] = useState<ProjectStats | null>(null)
 
   // SSE handlers
   const handleQuestion = useCallback(() => {
+    recordQuestion()
     fetchGoals()
     if (selectedGoal) {
       fetchGoalDetail(selectedGoal.id)
     }
-  }, [fetchGoals, selectedGoal, fetchGoalDetail])
+  }, [recordQuestion, fetchGoals, selectedGoal, fetchGoalDetail])
 
   const handleAnswered = useCallback(() => {
+    recordAnswered()
     fetchGoals()
     if (selectedGoal) {
       fetchGoalDetail(selectedGoal.id)
     }
-  }, [fetchGoals, selectedGoal, fetchGoalDetail])
+  }, [recordAnswered, fetchGoals, selectedGoal, fetchGoalDetail])
 
-  const handleExecutorStarted = useCallback(() => {
+  const handleExecutorStarted = useCallback((data: { goal_id: string; session_id: string }) => {
+    recordExecutorStarted(data.goal_id, data.session_id)
     fetchGoals()
     if (selectedGoal) {
       fetchGoalDetail(selectedGoal.id)
     }
-  }, [fetchGoals, selectedGoal, fetchGoalDetail])
+  }, [recordExecutorStarted, fetchGoals, selectedGoal, fetchGoalDetail])
 
-  const handleExecutorStopped = useCallback(() => {
+  const handleExecutorStopped = useCallback((data: { goal_id: string; session_id: string }) => {
+    recordExecutorStopped(data.goal_id, data.session_id)
     fetchGoals()
     if (selectedGoal) {
       fetchGoalDetail(selectedGoal.id)
     }
-  }, [fetchGoals, selectedGoal, fetchGoalDetail])
+  }, [recordExecutorStopped, fetchGoals, selectedGoal, fetchGoalDetail])
 
   const handleGoalUpdated = useCallback((data: { goal_id: string }) => {
+    recordGoalUpdated(data.goal_id)
     fetchGoals()
     if (selectedGoal && data.goal_id === selectedGoal.id) {
       fetchGoalDetail(selectedGoal.id)
     }
-  }, [fetchGoals, selectedGoal, fetchGoalDetail])
+  }, [recordGoalUpdated, fetchGoals, selectedGoal, fetchGoalDetail])
+
+  const handleGoalIced = useCallback((data: { goal_id: string }) => {
+    recordGoalIced(data.goal_id)
+    fetchGoals()
+  }, [recordGoalIced, fetchGoals])
+
+  const handleGoalCompleted = useCallback((data: { goal_id: string }) => {
+    recordGoalCompleted(data.goal_id)
+    fetchGoals()
+  }, [recordGoalCompleted, fetchGoals])
 
   const handleRegistryUpdated = useCallback(() => {
     fetchGoals()
@@ -67,6 +98,8 @@ function AppContent() {
     onExecutorStarted: handleExecutorStarted,
     onExecutorStopped: handleExecutorStopped,
     onGoalUpdated: handleGoalUpdated,
+    onGoalIced: handleGoalIced,
+    onGoalCompleted: handleGoalCompleted,
     onRegistryUpdated: handleRegistryUpdated,
   })
 
@@ -99,6 +132,26 @@ function AppContent() {
     }, 300)
   }, [clearSelectedGoal])
 
+  const handleProjectClick = useCallback((project: ProjectStats) => {
+    setSelectedProject(project)
+    setProjectSheetOpen(true)
+  }, [])
+
+  const handleProjectSheetClose = useCallback(() => {
+    setProjectSheetOpen(false)
+    setTimeout(() => {
+      setSelectedProject(null)
+    }, 300)
+  }, [])
+
+  const handleGoalClickFromProject = useCallback((id: string) => {
+    // Close project sheet, open goal sheet
+    handleProjectSheetClose()
+    setTimeout(() => {
+      handleGoalClick(id)
+    }, 300)
+  }, [handleProjectSheetClose, handleGoalClick])
+
   return (
     <>
       <Routes>
@@ -110,13 +163,14 @@ function AppContent() {
                 goals={goals}
                 loading={loading}
                 pendingQuestions={totalPendingQuestions}
+                activities={activities}
                 onGoalClick={handleGoalClick}
               />
             }
           />
           <Route
             path="/projects"
-            element={<Projects goals={goals} loading={loading} />}
+            element={<Projects goals={goals} loading={loading} onProjectClick={handleProjectClick} />}
           />
           <Route
             path="/goals"
@@ -138,6 +192,17 @@ function AppContent() {
         goal={selectedGoal}
         goalStatus={goalStatus}
         onRefresh={() => selectedGoal && fetchGoalDetail(selectedGoal.id)}
+      />
+
+      {/* Project Detail Sheet */}
+      <ProjectSheet
+        open={projectSheetOpen}
+        onOpenChange={(open) => {
+          if (!open) handleProjectSheetClose()
+        }}
+        project={selectedProject}
+        goals={goals}
+        onGoalClick={handleGoalClickFromProject}
       />
     </>
   )
