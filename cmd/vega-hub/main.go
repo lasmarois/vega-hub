@@ -32,6 +32,13 @@ func main() {
 	h := hub.New(*dir)
 	p := goals.NewParser(*dir)
 
+	// Start file watcher for real-time updates
+	if *dir != "" {
+		if err := h.StartFileWatcher(); err != nil {
+			log.Printf("Warning: could not start file watcher: %v", err)
+		}
+	}
+
 	// Set up API routes
 	mux := http.NewServeMux()
 	api.RegisterRoutes(mux, h, p)

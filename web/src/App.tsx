@@ -128,6 +128,35 @@ function App() {
       }
     })
 
+    // File watcher events - real-time markdown updates
+    eventSource.addEventListener('goal_updated', (e) => {
+      const data = JSON.parse(e.data)
+      console.log('[SSE] Goal updated:', data)
+      fetchGoals()
+      // Refresh if this is the selected goal
+      const current = selectedGoalRef.current
+      if (current && data.goal_id && data.goal_id === current.id) {
+        fetchGoalDetail(current.id)
+      }
+    })
+
+    eventSource.addEventListener('registry_updated', () => {
+      console.log('[SSE] Registry updated')
+      fetchGoals()
+    })
+
+    eventSource.addEventListener('goal_iced', (e) => {
+      const data = JSON.parse(e.data)
+      console.log('[SSE] Goal iced:', data)
+      fetchGoals()
+    })
+
+    eventSource.addEventListener('goal_completed', (e) => {
+      const data = JSON.parse(e.data)
+      console.log('[SSE] Goal completed:', data)
+      fetchGoals()
+    })
+
     eventSource.onerror = () => {
       setConnected(false)
     }
