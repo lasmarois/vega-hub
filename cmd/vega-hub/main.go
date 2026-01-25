@@ -14,6 +14,9 @@ import (
 	"github.com/lasmarois/vega-hub/internal/hub"
 )
 
+// Version is set via ldflags at build time
+var Version = "dev"
+
 //go:embed all:web
 var webFS embed.FS
 
@@ -24,7 +27,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Println("v0.1.0")
+		fmt.Println(Version)
 		os.Exit(0)
 	}
 

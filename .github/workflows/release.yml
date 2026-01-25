@@ -2,14 +2,51 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - master
+    paths:
+      - 'VERSION'
 
 permissions:
   contents: write
 
 jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check VERSION and CHANGELOG
+        id: check
+        run: |
+          VERSION=$(cat VERSION | tr -d '\n\r ')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Check if CHANGELOG has entry for this version
+          if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "Found changelog entry for version $VERSION"
+          else
+            echo "::error::No changelog entry found for version $VERSION"
+            echo "Please add a '## [$VERSION]' section to CHANGELOG.md"
+            exit 1
+          fi
+
+          # Check if tag already exists
+          if git ls-remote --tags origin | grep -q "refs/tags/v$VERSION"; then
+            echo "Tag v$VERSION already exists, skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          fi
+
   build:
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
     name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -54,13 +91,18 @@ jobs:
           mkdir -p cmd/vega-hub/web
           cp -r web/dist/* cmd/vega-hub/web/
 
+      - name: Get version
+        id: version
+        run: echo "version=$(cat VERSION | tr -d '\n\r ')" >> $GITHUB_OUTPUT
+
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w" -o vega-hub-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/vega-hub
+          VERSION="${{ steps.version.outputs.version }}"
+          go build -ldflags="-s -w -X main.Version=v${VERSION}" -o vega-hub-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/vega-hub
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -70,9 +112,31 @@ jobs:
 
   release:
     name: Create Release
-    needs: build
+    needs: [check-release, build]
+    if: needs.check-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog
+        id: changelog
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+
+          # Extract content between this version header and the next version header
+          awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (found) exit
+              if ($0 ~ "\\[" ver "\\]") found=1
+              next
+            }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > /tmp/release_notes.md
+
+          echo "Extracted release notes:"
+          cat /tmp/release_notes.md
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -89,7 +153,15 @@ jobs:
           ls -la release/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release/*
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --notes-file /tmp/release_notes.md \
+            --target master \
+            release/*
+
+          echo "Created release v$VERSION"
