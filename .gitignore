@@ -16,3 +16,6 @@ web/node_modules/
 # Logs
 *.log
 build-errors.log
+
+# Built binary
+vega-hub
