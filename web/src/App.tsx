@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 
 interface Question {
   id: string
@@ -67,12 +67,18 @@ function App() {
   const [showOutput, setShowOutput] = useState(false)
   const [outputLoading, setOutputLoading] = useState(false)
 
+  // Ref to track selected goal without causing SSE reconnection
+  const selectedGoalRef = useRef<GoalDetail | null>(null)
+  useEffect(() => {
+    selectedGoalRef.current = selectedGoal
+  }, [selectedGoal])
+
   // Fetch goals on mount
   useEffect(() => {
     fetchGoals()
   }, [])
 
-  // SSE connection for real-time updates
+  // SSE connection for real-time updates (only connect once on mount)
   useEffect(() => {
     const eventSource = new EventSource('/api/events')
 
@@ -83,9 +89,9 @@ function App() {
     eventSource.addEventListener('question', () => {
       // Refresh goals to update pending counts
       fetchGoals()
-      // If we have a selected goal, refresh it
-      if (selectedGoal) {
-        fetchGoalDetail(selectedGoal.id)
+      // If we have a selected goal, refresh it (use ref to avoid dependency)
+      if (selectedGoalRef.current) {
+        fetchGoalDetail(selectedGoalRef.current.id)
       }
     })
 
@@ -97,28 +103,28 @@ function App() {
         return next
       })
       fetchGoals()
-      if (selectedGoal) {
-        fetchGoalDetail(selectedGoal.id)
+      if (selectedGoalRef.current) {
+        fetchGoalDetail(selectedGoalRef.current.id)
       }
     })
 
     eventSource.addEventListener('executor_started', () => {
       fetchGoals()
-      if (selectedGoal) {
-        fetchGoalDetail(selectedGoal.id)
+      if (selectedGoalRef.current) {
+        fetchGoalDetail(selectedGoalRef.current.id)
       }
     })
 
     eventSource.addEventListener('executor_stopped', (e) => {
       const data = JSON.parse(e.data)
-      // Show output from the stopped executor
-      if (data.output && data.goal_id === selectedGoal?.id) {
+      // Show output from the stopped executor (use ref to avoid dependency)
+      if (data.output && data.goal_id === selectedGoalRef.current?.id) {
         setExecutorOutput(data.output)
         setShowOutput(true)
       }
       fetchGoals()
-      if (selectedGoal) {
-        fetchGoalDetail(selectedGoal.id)
+      if (selectedGoalRef.current) {
+        fetchGoalDetail(selectedGoalRef.current.id)
       }
     })
 
@@ -127,7 +133,7 @@ function App() {
     }
 
     return () => eventSource.close()
-  }, [selectedGoal])
+  }, []) // Empty dependency - only connect once
 
   const fetchGoals = async () => {
     try {
