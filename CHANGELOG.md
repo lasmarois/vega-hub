@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-25
+
+### Added
+- **Goal management CLI**
+  - `vega-hub goal list` - List goals with filters (`--project`, `--status`)
+  - `vega-hub goal create` - Create goal with worktree (`--base-branch`, `--no-worktree`)
+  - `vega-hub goal complete` - Complete goal (merge, cleanup, `--no-merge`, `--force`)
+  - `vega-hub goal ice` - Pause goal for later (`--force`)
+- **Project management CLI**
+  - `vega-hub project add` - Add project with git clone (`--branch`)
+  - `vega-hub project list` - List registered projects
+- **Executor management CLI**
+  - `vega-hub executor spawn` - Spawn executor in goal worktree (`--prompt`)
+  - `vega-hub executor list` - List active executors (`--goal`)
+  - `vega-hub executor stop` - Stop running executor (`--reason`)
+- **Worktree management CLI**
+  - `vega-hub worktree create` - Create worktree for existing goal
+  - `vega-hub worktree remove` - Remove worktree (`--force`)
+  - `vega-hub worktree status` - Show worktree details (branch, uncommitted files)
+- **Credentials validation CLI**
+  - `vega-hub credentials check` - Validate git credentials for project
+  - User detection via `os/user.Current()`
+  - Support for GitHub (`gh auth`), GitLab (`glab auth`), SSH, and netrc
+  - AI-friendly error messages with fix instructions
+- **Port management improvements**
+  - Spawn injects `VEGA_HUB_PORT` environment variable to executors
+  - Lock file during startup to prevent race conditions
+
+### Changed
+- All CLI commands return structured JSON with `--json` flag
+- Error responses include `options` array with actionable fixes
+- Spawn API accepts `X-Vega-User` header for user tracking
+
 ## [0.3.0] - 2026-01-25
 
 ### Added
