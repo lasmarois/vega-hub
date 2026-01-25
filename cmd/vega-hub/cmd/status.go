@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lasmarois/vega-hub/internal/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -44,9 +45,9 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command, args []string) {
-	dir, err := GetVegaDir()
+	dir, err := cli.GetVegaDir()
 	if err != nil {
-		OutputError(ExitValidationError, "no_directory", err.Error(), nil, []ErrorOption{
+		cli.OutputError(cli.ExitValidationError, "no_directory", err.Error(), nil, []cli.ErrorOption{
 			{Flag: "dir", Description: "Specify vega-missile directory explicitly"},
 		})
 	}
@@ -62,14 +63,14 @@ func runStatus(cmd *cobra.Command, args []string) {
 	portData, err := os.ReadFile(portFile)
 	if err != nil {
 		result.Running = false
-		OutputSuccess("status", "vega-hub is not running", result)
+		cli.OutputSuccess("status", "vega-hub is not running", result)
 		return
 	}
 
 	port, err := strconv.Atoi(strings.TrimSpace(string(portData)))
 	if err != nil {
 		result.Running = false
-		OutputSuccess("status", "vega-hub is not running (invalid port file)", result)
+		cli.OutputSuccess("status", "vega-hub is not running (invalid port file)", result)
 		return
 	}
 
@@ -80,14 +81,14 @@ func runStatus(cmd *cobra.Command, args []string) {
 		os.Remove(portFile)
 		os.Remove(pidFile)
 		result.Running = false
-		OutputSuccess("status", "vega-hub is not running (stale files cleaned)", result)
+		cli.OutputSuccess("status", "vega-hub is not running (stale files cleaned)", result)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		result.Running = false
-		OutputSuccess("status", "vega-hub is not responding correctly", result)
+		cli.OutputSuccess("status", "vega-hub is not responding correctly", result)
 		return
 	}
 
@@ -110,7 +111,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 	result.URL = fmt.Sprintf("http://localhost:%d", port)
 	result.Uptime = uptime
 
-	OutputSuccess("status", fmt.Sprintf("vega-hub is running on port %d", port), result)
+	cli.OutputSuccess("status", fmt.Sprintf("vega-hub is running on port %d", port), result)
 }
 
 func formatDuration(d time.Duration) string {

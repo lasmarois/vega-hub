@@ -1,22 +1,15 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
-	"path/filepath"
 
+	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/goal"
+	"github.com/lasmarois/vega-hub/internal/cli"
 	"github.com/spf13/cobra"
 )
 
 // Version is set via ldflags at build time
 var Version = "dev"
-
-// Global flags
-var (
-	jsonOutput bool
-	quietMode  bool
-	vegaDir    string
-)
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -37,6 +30,10 @@ Run 'vega-hub serve' to start the server, or use subcommands for other operation
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()
 	},
+	// Sync flag values to cli package globals before running any command
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Flags are already bound to cli package variables via init()
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -47,35 +44,14 @@ func Execute() {
 }
 
 func init() {
-	// Global flags available to all commands
-	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
-	rootCmd.PersistentFlags().BoolVarP(&quietMode, "quiet", "q", false, "Minimal output")
-	rootCmd.PersistentFlags().StringVarP(&vegaDir, "dir", "d", "", "Vega-missile directory (default: auto-detect)")
+	// Global flags - bind directly to cli package variables
+	rootCmd.PersistentFlags().BoolVar(&cli.JSONOutput, "json", false, "Output in JSON format")
+	rootCmd.PersistentFlags().BoolVarP(&cli.QuietMode, "quiet", "q", false, "Minimal output")
+	rootCmd.PersistentFlags().StringVarP(&cli.VegaDir, "dir", "d", "", "Vega-missile directory (default: auto-detect)")
 
 	// Set version template
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
-}
 
-// GetVegaDir returns the vega-missile directory, auto-detecting if not specified
-func GetVegaDir() (string, error) {
-	if vegaDir != "" {
-		return vegaDir, nil
-	}
-
-	// Auto-detect: look for .claude/ directory walking up from cwd
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("could not get working directory: %w", err)
-	}
-
-	for dir != "/" {
-		if _, err := os.Stat(dir + "/.claude"); err == nil {
-			if _, err := os.Stat(dir + "/goals"); err == nil {
-				return dir, nil
-			}
-		}
-		dir = dir[:len(dir)-len("/"+filepath.Base(dir))]
-	}
-
-	return "", fmt.Errorf("could not auto-detect vega-missile directory (no .claude/ and goals/ found)")
+	// Add subcommands
+	rootCmd.AddCommand(goal.GoalCmd)
 }

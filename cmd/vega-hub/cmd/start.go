@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lasmarois/vega-hub/internal/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -46,23 +47,23 @@ func init() {
 }
 
 func runStart(cmd *cobra.Command, args []string) {
-	dir, err := GetVegaDir()
+	dir, err := cli.GetVegaDir()
 	if err != nil {
-		OutputError(ExitValidationError, "no_directory", err.Error(), nil, []ErrorOption{
+		cli.OutputError(cli.ExitValidationError, "no_directory", err.Error(), nil, []cli.ErrorOption{
 			{Flag: "dir", Description: "Specify vega-missile directory explicitly"},
 		})
 	}
 
 	// Check if already running
 	if result, running := checkRunning(dir); running {
-		OutputSuccess("already_running", "vega-hub is already running", result)
+		cli.OutputSuccess("already_running", "vega-hub is already running", result)
 		return
 	}
 
 	// Find available port
 	port, err := findAvailablePort(8080, 8089)
 	if err != nil {
-		OutputError(ExitStateError, "no_port_available",
+		cli.OutputError(cli.ExitStateError, "no_port_available",
 			"Could not find available port in range 8080-8089",
 			map[string]string{"range": "8080-8089"},
 			nil)
@@ -71,12 +72,12 @@ func runStart(cmd *cobra.Command, args []string) {
 	// Start daemon process
 	pid, err := startDaemon(dir, port)
 	if err != nil {
-		OutputError(ExitInternalError, "start_failed", err.Error(), nil, nil)
+		cli.OutputError(cli.ExitInternalError, "start_failed", err.Error(), nil, nil)
 	}
 
 	// Wait for health check
 	if err := waitForHealthy(port, 10*time.Second); err != nil {
-		OutputError(ExitInternalError, "health_check_failed",
+		cli.OutputError(cli.ExitInternalError, "health_check_failed",
 			"Daemon started but health check failed",
 			map[string]string{"port": strconv.Itoa(port), "pid": strconv.Itoa(pid)},
 			nil)
@@ -93,7 +94,7 @@ func runStart(cmd *cobra.Command, args []string) {
 		URL:    fmt.Sprintf("http://localhost:%d", port),
 	}
 
-	OutputSuccess("started", fmt.Sprintf("vega-hub started on port %d", port), result)
+	cli.OutputSuccess("started", fmt.Sprintf("vega-hub started on port %d", port), result)
 }
 
 func checkRunning(dir string) (*StartResult, bool) {

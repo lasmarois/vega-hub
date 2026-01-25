@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/lasmarois/vega-hub/internal/api"
+	"github.com/lasmarois/vega-hub/internal/cli"
 	"github.com/lasmarois/vega-hub/internal/goals"
 	"github.com/lasmarois/vega-hub/internal/hub"
 	"github.com/spf13/cobra"
@@ -42,10 +43,10 @@ func init() {
 }
 
 func runServe(cmd *cobra.Command, args []string) {
-	dir := vegaDir
+	dir := cli.VegaDir
 	if dir == "" {
 		// Try to auto-detect
-		detected, err := GetVegaDir()
+		detected, err := cli.GetVegaDir()
 		if err != nil {
 			// Not fatal - can run without a directory
 			log.Printf("Warning: %v", err)
@@ -89,6 +90,6 @@ func runServe(cmd *cobra.Command, args []string) {
 	}
 
 	if err := http.ListenAndServe(addr, mux); err != nil {
-		OutputError(ExitInternalError, "server_failed", fmt.Sprintf("Server failed: %v", err), nil, nil)
+		cli.OutputError(cli.ExitInternalError, "server_failed", fmt.Sprintf("Server failed: %v", err), nil, nil)
 	}
 }
