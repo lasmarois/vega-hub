@@ -6,8 +6,11 @@ import type { ProjectStats } from '@/pages/Projects'
 import { useSSE } from '@/hooks/useSSE'
 import { useGoals } from '@/hooks/useGoals'
 import { useActivity } from '@/hooks/useActivity'
+import { toast } from '@/hooks/useToast'
 import { GoalSheet } from '@/components/goals/GoalSheet'
 import { ProjectSheet } from '@/components/projects/ProjectSheet'
+import { CommandPalette } from '@/components/shared/CommandPalette'
+import { Toaster } from '@/components/ui/toaster'
 
 function AppContent() {
   const {
@@ -40,6 +43,11 @@ function AppContent() {
   // SSE handlers
   const handleQuestion = useCallback(() => {
     recordQuestion()
+    toast({
+      title: 'New Question',
+      description: 'An executor is waiting for your answer',
+      variant: 'destructive',
+    })
     fetchGoals()
     if (selectedGoal) {
       fetchGoalDetail(selectedGoal.id)
@@ -56,6 +64,11 @@ function AppContent() {
 
   const handleExecutorStarted = useCallback((data: { goal_id: string; session_id: string }) => {
     recordExecutorStarted(data.goal_id, data.session_id)
+    toast({
+      title: 'Executor Started',
+      description: `Goal #${data.goal_id} is now running`,
+      variant: 'success',
+    })
     fetchGoals()
     if (selectedGoal) {
       fetchGoalDetail(selectedGoal.id)
@@ -64,6 +77,10 @@ function AppContent() {
 
   const handleExecutorStopped = useCallback((data: { goal_id: string; session_id: string }) => {
     recordExecutorStopped(data.goal_id, data.session_id)
+    toast({
+      title: 'Executor Stopped',
+      description: `Goal #${data.goal_id} has stopped`,
+    })
     fetchGoals()
     if (selectedGoal) {
       fetchGoalDetail(selectedGoal.id)
@@ -80,11 +97,20 @@ function AppContent() {
 
   const handleGoalIced = useCallback((data: { goal_id: string }) => {
     recordGoalIced(data.goal_id)
+    toast({
+      title: 'Goal Iced',
+      description: `Goal #${data.goal_id} has been paused`,
+    })
     fetchGoals()
   }, [recordGoalIced, fetchGoals])
 
   const handleGoalCompleted = useCallback((data: { goal_id: string }) => {
     recordGoalCompleted(data.goal_id)
+    toast({
+      title: 'Goal Completed',
+      description: `Goal #${data.goal_id} has been completed`,
+      variant: 'success',
+    })
     fetchGoals()
   }, [recordGoalCompleted, fetchGoals])
 
@@ -204,6 +230,12 @@ function AppContent() {
         goals={goals}
         onGoalClick={handleGoalClickFromProject}
       />
+
+      {/* Command Palette */}
+      <CommandPalette goals={goals} onGoalSelect={handleGoalClick} />
+
+      {/* Toaster for notifications */}
+      <Toaster />
     </>
   )
 }

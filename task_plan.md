@@ -76,14 +76,14 @@ Redesign vega-hub UI to surface all vega-missile data (registry, projects, goals
 
 ---
 
-## Phase 4: Polish [pending]
+## Phase 4: Polish [complete]
 
 ### Tasks
-- [ ] Command palette (Cmd+K)
-- [ ] Toast notifications via SSE
+- [x] Command palette (Cmd+K)
+- [x] Toast notifications via SSE
 - [x] Loading states (Skeleton)
 - [x] Empty states
-- [ ] Error handling
+- [x] Error handling (via toast notifications for spawn failures)
 
 ---
 
@@ -102,3 +102,4 @@ Redesign vega-hub UI to surface all vega-missile data (registry, projects, goals
 |-------|-------|
 | 1 | web/package.json, web/tailwind.config.js, web/components.json, web/tsconfig.json, web/vite.config.ts, web/src/index.css, web/src/App.tsx, web/src/lib/utils.ts, web/src/lib/types.ts, web/src/components/ui/*, web/src/components/layout/*, web/src/components/goals/*, web/src/pages/*, web/src/hooks/* |
 | 2-3 | web/src/lib/types.ts, web/src/hooks/useActivity.ts, web/src/hooks/index.ts, web/src/components/shared/*, web/src/components/projects/*, web/src/components/ui/select.tsx, web/src/pages/Home.tsx, web/src/pages/Goals.tsx, web/src/pages/Projects.tsx, web/src/components/goals/GoalSheet.tsx, web/src/App.tsx |
+| 4 | web/src/components/ui/dialog.tsx, web/src/components/ui/command.tsx, web/src/components/ui/toast.tsx, web/src/components/ui/toaster.tsx, web/src/components/shared/CommandPalette.tsx, web/src/hooks/useToast.ts, web/src/App.tsx |
