@@ -178,7 +178,7 @@ func TestHandleExecutorStop(t *testing.T) {
 	h, _, _ := setupTestEnv(t)
 
 	// First register an executor
-	h.RegisterExecutor("abc1234", "session-001", "/path/to/worktree")
+	h.RegisterExecutor("abc1234", "session-001", "/path/to/worktree", "testuser")
 
 	// Now stop it
 	body := `{"goal_id": "abc1234", "session_id": "session-001", "reason": "completed"}`
@@ -233,7 +233,7 @@ func TestHandleGoals_WithExecutor(t *testing.T) {
 	h, p, _ := setupTestEnv(t)
 
 	// Register an executor
-	h.RegisterExecutor("abc1234", "session-001", "/path")
+	h.RegisterExecutor("abc1234", "session-001", "/path", "testuser")
 
 	req := httptest.NewRequest("GET", "/api/goals", nil)
 	w := httptest.NewRecorder()

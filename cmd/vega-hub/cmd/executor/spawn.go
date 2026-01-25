@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 
@@ -24,11 +25,13 @@ type SpawnResult struct {
 	SessionID string `json:"session_id"`
 	Worktree  string `json:"worktree"`
 	Message   string `json:"message"`
+	User      string `json:"user,omitempty"` // Username who spawned this executor
 }
 
 // SpawnRequest is the request body for the spawn API
 type SpawnRequest struct {
 	Context string `json:"context,omitempty"`
+	User    string `json:"user,omitempty"` // Username spawning this executor
 }
 
 // SpawnResponse is the response from the spawn API
@@ -37,6 +40,7 @@ type SpawnResponse struct {
 	Message   string `json:"message"`
 	Worktree  string `json:"worktree,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
+	User      string `json:"user,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
 
@@ -87,9 +91,16 @@ func runSpawn(c *cobra.Command, args []string) {
 			})
 	}
 
+	// Detect current user
+	var username string
+	if u, err := user.Current(); err == nil {
+		username = u.Username
+	}
+
 	// Build request
 	reqBody := SpawnRequest{
 		Context: spawnPrompt,
+		User:    username,
 	}
 	if reqBody.Context == "" {
 		reqBody.Context = "Continue working on your assigned goal."
@@ -159,6 +170,7 @@ func runSpawn(c *cobra.Command, args []string) {
 		SessionID: spawnResp.SessionID,
 		Worktree:  spawnResp.Worktree,
 		Message:   spawnResp.Message,
+		User:      spawnResp.User,
 	}
 
 	cli.Output(cli.Result{

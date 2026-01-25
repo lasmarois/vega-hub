@@ -165,7 +165,8 @@ func handleExecutorRegister(h *hub.Hub) http.HandlerFunc {
 		}
 
 		// Register the executor and get context
-		context := h.RegisterExecutor(req.GoalID, req.SessionID, req.CWD)
+		// Note: This is the legacy hook-based registration path, user is unknown
+		context := h.RegisterExecutor(req.GoalID, req.SessionID, req.CWD, "")
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(ExecutorRegisterResponse{
@@ -314,6 +315,7 @@ type GoalDetailResponse struct {
 // SpawnRequest is the request body for POST /api/goals/:id/spawn
 type SpawnRequest struct {
 	Context string `json:"context,omitempty"`
+	User    string `json:"user,omitempty"` // Username spawning this executor
 }
 
 // handleGoalRoutes routes /api/goals/:id/* requests
@@ -425,11 +427,18 @@ func handleGoalSpawn(h *hub.Hub, goalID string) http.HandlerFunc {
 			}
 		}
 
-		log.Printf("[SPAWN] Processing spawn for Goal #%s, context: %q", goalID, req.Context)
+		// Get user from X-Vega-User header, or from request body, or auto-detect
+		user := r.Header.Get("X-Vega-User")
+		if user == "" {
+			user = req.User
+		}
+
+		log.Printf("[SPAWN] Processing spawn for Goal #%s, context: %q, user: %q", goalID, req.Context, user)
 
 		result := h.SpawnExecutor(hub.SpawnRequest{
 			GoalID:  goalID,
 			Context: req.Context,
+			User:    user,
 		})
 
 		log.Printf("[SPAWN] Result for Goal #%s: success=%v, message=%s", goalID, result.Success, result.Message)

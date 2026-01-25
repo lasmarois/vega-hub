@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 )
@@ -13,6 +14,7 @@ import (
 type SpawnRequest struct {
 	GoalID  string `json:"goal_id"`
 	Context string `json:"context,omitempty"` // Optional additional context/instructions
+	User    string `json:"user,omitempty"`    // Username spawning this executor (auto-detected if empty)
 }
 
 // SpawnResult contains the result of spawning an executor
@@ -21,6 +23,7 @@ type SpawnResult struct {
 	Message   string `json:"message"`
 	Worktree  string `json:"worktree,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
+	User      string `json:"user,omitempty"` // Username who spawned this executor
 }
 
 // SpawnExecutor spawns a new Claude executor in the goal's worktree
@@ -55,6 +58,14 @@ func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 
 	// Generate session ID for tracking
 	sessionID := generateSessionID()
+
+	// Detect or use provided user
+	username := req.User
+	if username == "" {
+		if u, err := user.Current(); err == nil {
+			username = u.Username
+		}
+	}
 
 	// Build the prompt
 	prompt := "Continue working on your assigned goal."
@@ -99,7 +110,7 @@ func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 	}
 
 	// Register executor with vega-hub (don't rely on hooks)
-	h.RegisterExecutor(req.GoalID, sessionID, worktree)
+	h.RegisterExecutor(req.GoalID, sessionID, worktree, username)
 
 	// Monitor process and notify when done
 	go func() {
@@ -114,6 +125,7 @@ func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 		Message:   fmt.Sprintf("Executor spawned for Goal #%s (PID: %d)", req.GoalID, cmd.Process.Pid),
 		Worktree:  worktree,
 		SessionID: sessionID,
+		User:      username,
 	}
 }
 

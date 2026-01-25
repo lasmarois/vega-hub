@@ -36,6 +36,7 @@ type Executor struct {
 	CWD       string    `json:"cwd"`
 	StartedAt time.Time `json:"started_at"`
 	LogFile   string    `json:"log_file,omitempty"`
+	User      string    `json:"user,omitempty"` // Username who spawned this executor
 }
 
 // Question represents a pending question from an executor
@@ -75,7 +76,8 @@ func New(dir string) *Hub {
 }
 
 // RegisterExecutor registers a new executor session and returns context
-func (h *Hub) RegisterExecutor(goalID string, sessionID, cwd string) string {
+// The user parameter tracks who spawned this executor
+func (h *Hub) RegisterExecutor(goalID string, sessionID, cwd, user string) string {
 	logFile := filepath.Join(cwd, ".executor-output.log")
 	h.mu.Lock()
 	h.executors[sessionID] = &Executor{
@@ -84,6 +86,7 @@ func (h *Hub) RegisterExecutor(goalID string, sessionID, cwd string) string {
 		CWD:       cwd,
 		StartedAt: time.Now(),
 		LogFile:   logFile,
+		User:      user,
 	}
 	h.mu.Unlock()
 
@@ -100,6 +103,7 @@ func (h *Hub) RegisterExecutor(goalID string, sessionID, cwd string) string {
 			"session_id": sessionID,
 			"goal_id":    goalID,
 			"cwd":        cwd,
+			"user":       user,
 		},
 	})
 

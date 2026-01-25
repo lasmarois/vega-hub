@@ -37,7 +37,7 @@ func TestRegisterExecutor(t *testing.T) {
 	sessionID := "session-001"
 	cwd := "/path/to/worktree"
 
-	context := h.RegisterExecutor(goalID, sessionID, cwd)
+	context := h.RegisterExecutor(goalID, sessionID, cwd, "testuser")
 
 	// Check context contains expected info
 	if context == "" {
@@ -69,7 +69,7 @@ func TestStopExecutor(t *testing.T) {
 	sessionID := "session-001"
 	cwd := "/path/to/worktree"
 
-	h.RegisterExecutor(goalID, sessionID, cwd)
+	h.RegisterExecutor(goalID, sessionID, cwd, "testuser")
 
 	// Verify registered
 	if len(h.GetActiveExecutors()) != 1 {
@@ -236,7 +236,7 @@ func TestConcurrentExecutorRegistration(t *testing.T) {
 			defer wg.Done()
 			goalID := "goal-" + itoa(i)
 			sessionID := "session-" + itoa(i)
-			h.RegisterExecutor(goalID, sessionID, "/path/"+itoa(i))
+			h.RegisterExecutor(goalID, sessionID, "/path/"+itoa(i), "testuser")
 		}(i)
 	}
 	wg.Wait()

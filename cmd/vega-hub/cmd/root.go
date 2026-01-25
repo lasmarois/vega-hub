@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 
+	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/credentials"
 	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/executor"
 	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/goal"
 	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/project"
@@ -58,4 +59,5 @@ func init() {
 	rootCmd.AddCommand(goal.GoalCmd)
 	rootCmd.AddCommand(project.ProjectCmd)
 	rootCmd.AddCommand(executor.ExecutorCmd)
+	rootCmd.AddCommand(credentials.CredentialsCmd)
 }

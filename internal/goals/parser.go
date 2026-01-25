@@ -3,6 +3,7 @@ package goals
 import (
 	"bufio"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -386,4 +387,117 @@ func (p *Parser) ParseGoalDetail(id string) (*GoalDetail, error) {
 	detail.Notes = noteLines
 
 	return detail, scanner.Err()
+}
+
+// Project represents a managed project from projects/<name>.md
+type Project struct {
+	Name       string `json:"name"`
+	Workspace  string `json:"workspace"`
+	BaseBranch string `json:"base_branch"`
+	Upstream   string `json:"upstream"`    // Git remote URL or local path
+	GitRemote  string `json:"git_remote"`  // Resolved git remote URL (from upstream or repo)
+}
+
+// ParseProject reads and parses a project configuration file
+// Returns project details including git remote for credential validation
+func (p *Parser) ParseProject(name string) (*Project, error) {
+	projectPath := filepath.Join(p.dir, "projects", name+".md")
+	file, err := os.Open(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	project := &Project{Name: name}
+	scanner := bufio.NewScanner(file)
+
+	// Regex patterns for project config
+	// Matches: **Workspace**: `workspaces/name/...` or - **Workspace**: `...`
+	workspaceRe := regexp.MustCompile(`(?:\*\*)?Workspace(?:\*\*)?:?\s*` + "`" + `?([^` + "`" + `]+)` + "`?")
+	// Matches: **Base Branch**: `master` or Base Branch: master
+	baseBranchRe := regexp.MustCompile(`(?i)(?:\*\*)?Base Branch(?:\*\*)?:?\s*` + "`?" + `([a-zA-Z0-9_/-]+)` + "`?")
+	// Matches: **Upstream**: `https://github.com/...` or Upstream: /local/path
+	upstreamRe := regexp.MustCompile(`(?:\*\*)?Upstream(?:\*\*)?:?\s*` + "`?" + `([^` + "`" + `\s]+)` + "`?")
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if matches := workspaceRe.FindStringSubmatch(line); matches != nil {
+			project.Workspace = strings.TrimSpace(matches[1])
+		}
+		if matches := baseBranchRe.FindStringSubmatch(line); matches != nil {
+			project.BaseBranch = strings.TrimSpace(matches[1])
+		}
+		if matches := upstreamRe.FindStringSubmatch(line); matches != nil {
+			project.Upstream = strings.TrimSpace(matches[1])
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	// Resolve GitRemote from Upstream
+	// If Upstream is a local path, try to get the actual git remote from the repo
+	if project.Upstream != "" {
+		if strings.HasPrefix(project.Upstream, "/") || strings.HasPrefix(project.Upstream, "~") {
+			// Local path - try to get remote from the workspace
+			workspacePath := filepath.Join(p.dir, "workspaces", name, "worktree-base")
+			if remote, err := getGitRemote(workspacePath); err == nil {
+				project.GitRemote = remote
+			} else {
+				// Fall back to trying the upstream path directly
+				if remote, err := getGitRemote(project.Upstream); err == nil {
+					project.GitRemote = remote
+				}
+			}
+		} else {
+			// Already a git URL
+			project.GitRemote = project.Upstream
+		}
+	} else {
+		// No upstream - try to get remote from workspace
+		workspacePath := filepath.Join(p.dir, "workspaces", name, "worktree-base")
+		if remote, err := getGitRemote(workspacePath); err == nil {
+			project.GitRemote = remote
+		}
+	}
+
+	return project, nil
+}
+
+// getGitRemote gets the origin remote URL from a git repository
+func getGitRemote(repoPath string) (string, error) {
+	cmd := exec.Command("git", "-C", repoPath, "remote", "get-url", "origin")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// ListProjects returns all project names from projects/index.md
+func (p *Parser) ListProjects() ([]string, error) {
+	indexPath := filepath.Join(p.dir, "projects", "index.md")
+	file, err := os.Open(indexPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var projects []string
+	scanner := bufio.NewScanner(file)
+
+	// Look for markdown links: [project-name](project-name.md)
+	linkRe := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\.md\)`)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if matches := linkRe.FindStringSubmatch(line); matches != nil {
+			// matches[1] is the display name, matches[2] is the filename
+			projects = append(projects, matches[2])
+		}
+	}
+
+	return projects, scanner.Err()
 }
