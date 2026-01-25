@@ -17,5 +17,8 @@ web/node_modules/
 *.log
 build-errors.log
 
-# Built binary
-vega-hub
+# Built binary (root only, not cmd/vega-hub/)
+/vega-hub
+
+# Web embed placeholder (built by Dockerfile)
+cmd/vega-hub/web/
