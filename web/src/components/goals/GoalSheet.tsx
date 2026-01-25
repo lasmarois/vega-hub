@@ -13,11 +13,17 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, AlertCircle, CheckCircle2, Circle, MessageSquare, BookOpen, Clock, Maximize2, Minimize2 } from 'lucide-react'
+import { Play, FileText, AlertCircle, CheckCircle2, Circle, MessageSquare, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus, Question } from '@/lib/types'
+import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog } from './GoalActions'
 
 interface GoalSheetProps {
   open: boolean
@@ -34,6 +40,11 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
   const [showSpawnInput, setShowSpawnInput] = useState(false)
   const [spawnContext, setSpawnContext] = useState('')
   const [expanded, setExpanded] = useState(false)
+  const [actionMenuOpen, setActionMenuOpen] = useState(false)
+  const [completeDialogOpen, setCompleteDialogOpen] = useState(false)
+  const [iceDialogOpen, setIceDialogOpen] = useState(false)
+  const [stopDialogOpen, setStopDialogOpen] = useState(false)
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false)
 
   const handleAnswer = async (questionId: string) => {
     const answer = answerText[questionId]
@@ -206,6 +217,78 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                 )}
               </>
             )}
+
+            {/* Action Menu */}
+            <Popover open={actionMenuOpen} onOpenChange={setActionMenuOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="icon" className="ml-auto">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-48 p-1" align="end">
+                {/* Stop - only when running */}
+                {(goal.executor_status === 'running' || goal.executor_status === 'waiting') &&
+                  goal.active_executors &&
+                  goal.active_executors.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start gap-2 text-orange-600"
+                    onClick={() => {
+                      setActionMenuOpen(false)
+                      setStopDialogOpen(true)
+                    }}
+                  >
+                    <Square className="h-4 w-4" />
+                    Stop Executor
+                  </Button>
+                )}
+
+                {/* Complete - only for active goals */}
+                {goal.status === 'active' && (
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start gap-2 text-green-600"
+                    onClick={() => {
+                      setActionMenuOpen(false)
+                      setCompleteDialogOpen(true)
+                    }}
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Complete Goal
+                  </Button>
+                )}
+
+                {/* Ice - only for active goals */}
+                {goal.status === 'active' && (
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start gap-2 text-blue-600"
+                    onClick={() => {
+                      setActionMenuOpen(false)
+                      setIceDialogOpen(true)
+                    }}
+                  >
+                    <Pause className="h-4 w-4" />
+                    Ice Goal
+                  </Button>
+                )}
+
+                {/* Cleanup - only for completed goals */}
+                {goal.status === 'completed' && (
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start gap-2 text-red-600"
+                    onClick={() => {
+                      setActionMenuOpen(false)
+                      setCleanupDialogOpen(true)
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Cleanup Branch
+                  </Button>
+                )}
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
 
@@ -487,6 +570,39 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
           </ScrollArea>
         </Tabs>
       </SheetContent>
+
+      {/* Goal Action Dialogs */}
+      <CompleteGoalDialog
+        open={completeDialogOpen}
+        onOpenChange={setCompleteDialogOpen}
+        goal={goal}
+        onSuccess={onRefresh}
+      />
+
+      <IceGoalDialog
+        open={iceDialogOpen}
+        onOpenChange={setIceDialogOpen}
+        goal={goal}
+        onSuccess={onRefresh}
+      />
+
+      {goal.active_executors && goal.active_executors.length > 0 && (
+        <StopExecutorDialog
+          open={stopDialogOpen}
+          onOpenChange={setStopDialogOpen}
+          goalId={goal.id}
+          sessionId={goal.active_executors[0].session_id}
+          onSuccess={onRefresh}
+        />
+      )}
+
+      <CleanupGoalDialog
+        open={cleanupDialogOpen}
+        onOpenChange={setCleanupDialogOpen}
+        goalId={goal.id}
+        project={goal.projects[0] || ''}
+        onSuccess={onRefresh}
+      />
     </Sheet>
   )
 }

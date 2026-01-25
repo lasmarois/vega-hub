@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,10 +10,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Target, ChevronDown } from 'lucide-react'
+import { Target, ChevronDown, Plus } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
-import type { GoalSummary } from '@/lib/types'
+import type { GoalSummary, Project } from '@/lib/types'
+import { CreateGoalDialog } from '@/components/goals'
 
 // Parse phase string like "2/4", "1/?", or "Phase 2" into { current, total }
 function parsePhase(phase: string): { current: number; total: number } | null {
@@ -39,15 +40,26 @@ interface GoalsProps {
   goals: GoalSummary[]
   loading: boolean
   onGoalClick: (id: string) => void
+  onRefresh: () => void
 }
 
 type FilterType = 'all' | 'active' | 'iced' | 'completed'
 type SortType = 'newest' | 'oldest' | 'status' | 'questions'
 
-export function Goals({ goals, loading, onGoalClick }: GoalsProps) {
+export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
   const [filter, setFilter] = useState<FilterType>('all')
   const [sort, setSort] = useState<SortType>('newest')
   const [showCompleted, setShowCompleted] = useState(false)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [projects, setProjects] = useState<Project[]>([])
+
+  // Fetch projects for the create dialog
+  useEffect(() => {
+    fetch('/api/projects')
+      .then(res => res.json())
+      .then(data => setProjects(data))
+      .catch(err => console.error('Failed to load projects:', err))
+  }, [])
 
   const filterOptions: { value: FilterType; label: string; count: number }[] = [
     { value: 'all', label: 'All', count: goals.length },
@@ -103,7 +115,13 @@ export function Goals({ goals, loading, onGoalClick }: GoalsProps) {
 
   return (
     <div className="p-4 space-y-4">
-      <h1 className="text-2xl font-bold">Goals</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Goals</h1>
+        <Button onClick={() => setCreateDialogOpen(true)} className="gap-2">
+          <Plus className="h-4 w-4" />
+          New Goal
+        </Button>
+      </div>
 
       {/* Filter Chips & Sort */}
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -178,6 +196,13 @@ export function Goals({ goals, loading, onGoalClick }: GoalsProps) {
           )}
         </div>
       )}
+
+      <CreateGoalDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        projects={projects}
+        onSuccess={onRefresh}
+      />
     </div>
   )
 }

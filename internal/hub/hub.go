@@ -320,6 +320,14 @@ func (h *Hub) broadcast(event Event) {
 	}
 }
 
+// EmitEvent broadcasts a custom event to all subscribers
+func (h *Hub) EmitEvent(eventType string, data interface{}) {
+	h.broadcast(Event{
+		Type: eventType,
+		Data: data,
+	})
+}
+
 // readLastLines reads the last N lines from a file
 func (h *Hub) readLastLines(filePath string, n int) string {
 	file, err := os.Open(filePath)

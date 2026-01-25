@@ -466,6 +466,31 @@ func (p *Parser) ParseProject(name string) (*Project, error) {
 	return project, nil
 }
 
+// ParseProject is a standalone function to parse a project config
+func ParseProject(vegaDir, name string) (*Project, error) {
+	p := NewParser(vegaDir)
+	return p.ParseProject(name)
+}
+
+// ParseProjects returns all projects with their details
+func ParseProjects(vegaDir string) ([]Project, error) {
+	p := NewParser(vegaDir)
+	names, err := p.ListProjects()
+	if err != nil {
+		return nil, err
+	}
+
+	var projects []Project
+	for _, name := range names {
+		proj, err := p.ParseProject(name)
+		if err != nil {
+			continue // Skip projects that fail to parse
+		}
+		projects = append(projects, *proj)
+	}
+	return projects, nil
+}
+
 // getGitRemote gets the origin remote URL from a git repository
 func getGitRemote(repoPath string) (string, error) {
 	cmd := exec.Command("git", "-C", repoPath, "remote", "get-url", "origin")

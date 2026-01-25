@@ -10,6 +10,7 @@ import (
 
 	"github.com/lasmarois/vega-hub/internal/goals"
 	"github.com/lasmarois/vega-hub/internal/hub"
+	"github.com/lasmarois/vega-hub/internal/operations"
 )
 
 // RegisterRoutes sets up all API routes
@@ -22,8 +23,9 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, p *goals.Parser) {
 	mux.HandleFunc("/api/executor/stop", corsMiddleware(handleExecutorStop(h)))
 	mux.HandleFunc("/api/events", handleSSE(h))
 	mux.HandleFunc("/api/health", handleHealth())
-	mux.HandleFunc("/api/goals", corsMiddleware(handleGoals(h, p)))
+	mux.HandleFunc("/api/goals", corsMiddleware(handleGoalsRoot(h, p)))
 	mux.HandleFunc("/api/goals/", corsMiddleware(handleGoalRoutes(h, p)))
+	mux.HandleFunc("/api/projects", corsMiddleware(handleProjects(h)))
 }
 
 // AskRequest is the request body for POST /api/ask
@@ -246,6 +248,46 @@ type GoalSummary struct {
 	ActiveExecutors  int    `json:"active_executors"`
 }
 
+// CreateGoalRequest is the request body for POST /api/goals
+type CreateGoalRequest struct {
+	Title      string `json:"title"`
+	Project    string `json:"project"`
+	BaseBranch string `json:"base_branch,omitempty"`
+}
+
+// CompleteGoalRequest is the request body for POST /api/goals/:id/complete
+type CompleteGoalRequest struct {
+	Project string `json:"project"`
+	NoMerge bool   `json:"no_merge,omitempty"`
+	Force   bool   `json:"force,omitempty"`
+}
+
+// IceGoalRequest is the request body for POST /api/goals/:id/ice
+type IceGoalRequest struct {
+	Project string `json:"project"`
+	Reason  string `json:"reason"`
+	Force   bool   `json:"force,omitempty"`
+}
+
+// CleanupGoalRequest is the request body for POST /api/goals/:id/cleanup
+type CleanupGoalRequest struct {
+	Project string `json:"project"`
+}
+
+// handleGoalsRoot handles /api/goals - GET lists goals, POST creates a goal
+func handleGoalsRoot(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			handleGoals(h, p)(w, r)
+		case http.MethodPost:
+			handleCreateGoal(h)(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
 // handleGoals handles GET /api/goals - lists all goals with runtime status
 func handleGoals(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -347,6 +389,12 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleGoalStatus(h, id)(w, r)
 		case "output":
 			handleGoalOutput(h, id)(w, r)
+		case "complete":
+			handleGoalComplete(h, id)(w, r)
+		case "ice":
+			handleGoalIce(h, id)(w, r)
+		case "cleanup":
+			handleGoalCleanup(h, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -506,5 +554,261 @@ func handleGoalOutput(h *hub.Hub, goalID string) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// handleCreateGoal handles POST /api/goals - creates a new goal
+func handleCreateGoal(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[CREATE] Received create goal request from %s", r.RemoteAddr)
+
+		var req CreateGoalRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if req.Title == "" {
+			http.Error(w, "Title is required", http.StatusBadRequest)
+			return
+		}
+		if req.Project == "" {
+			http.Error(w, "Project is required", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[CREATE] Creating goal: title=%q, project=%q, base_branch=%q", req.Title, req.Project, req.BaseBranch)
+
+		result, data := operations.CreateGoal(operations.CreateOptions{
+			Title:      req.Title,
+			Project:    req.Project,
+			BaseBranch: req.BaseBranch,
+			VegaDir:    h.Dir(),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		if !result.Success {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(result)
+			return
+		}
+
+		log.Printf("[CREATE] Goal created: id=%s, branch=%s", data.GoalID, data.GoalBranch)
+
+		// Emit SSE event for goal created
+		h.EmitEvent("goal_created", map[string]interface{}{
+			"goal_id": data.GoalID,
+			"title":   data.Title,
+			"project": data.Project,
+		})
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    data,
+		})
+	}
+}
+
+// handleGoalComplete handles POST /api/goals/:id/complete - completes a goal
+func handleGoalComplete(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		log.Printf("[COMPLETE] Received complete request for goal %s from %s", goalID, r.RemoteAddr)
+
+		var req CompleteGoalRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if req.Project == "" {
+			http.Error(w, "Project is required", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[COMPLETE] Completing goal %s in project %s (no_merge=%v, force=%v)", goalID, req.Project, req.NoMerge, req.Force)
+
+		result, data := operations.CompleteGoal(operations.CompleteOptions{
+			GoalID:  goalID,
+			Project: req.Project,
+			NoMerge: req.NoMerge,
+			Force:   req.Force,
+			VegaDir: h.Dir(),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		if !result.Success {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(result)
+			return
+		}
+
+		log.Printf("[COMPLETE] Goal %s completed successfully", goalID)
+
+		// Emit SSE event for goal completed
+		h.EmitEvent("goal_completed", map[string]interface{}{
+			"goal_id": goalID,
+			"title":   data.Title,
+			"project": data.Project,
+			"merged":  data.Merged,
+		})
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    data,
+		})
+	}
+}
+
+// handleGoalIce handles POST /api/goals/:id/ice - ices (pauses) a goal
+func handleGoalIce(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		log.Printf("[ICE] Received ice request for goal %s from %s", goalID, r.RemoteAddr)
+
+		var req IceGoalRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if req.Project == "" {
+			http.Error(w, "Project is required", http.StatusBadRequest)
+			return
+		}
+		if req.Reason == "" {
+			http.Error(w, "Reason is required", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[ICE] Icing goal %s in project %s (reason=%q, force=%v)", goalID, req.Project, req.Reason, req.Force)
+
+		result, data := operations.IceGoal(operations.IceOptions{
+			GoalID:  goalID,
+			Project: req.Project,
+			Reason:  req.Reason,
+			Force:   req.Force,
+			VegaDir: h.Dir(),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		if !result.Success {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(result)
+			return
+		}
+
+		log.Printf("[ICE] Goal %s iced successfully", goalID)
+
+		// Emit SSE event for goal iced
+		h.EmitEvent("goal_iced", map[string]interface{}{
+			"goal_id": goalID,
+			"title":   data.Title,
+			"project": data.Project,
+			"reason":  data.Reason,
+		})
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    data,
+		})
+	}
+}
+
+// handleGoalCleanup handles POST /api/goals/:id/cleanup - cleans up a completed goal's branch
+func handleGoalCleanup(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		log.Printf("[CLEANUP] Received cleanup request for goal %s from %s", goalID, r.RemoteAddr)
+
+		var req CleanupGoalRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if req.Project == "" {
+			http.Error(w, "Project is required", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[CLEANUP] Cleaning up goal %s in project %s", goalID, req.Project)
+
+		result, data := operations.CleanupGoal(operations.CleanupOptions{
+			GoalID:  goalID,
+			Project: req.Project,
+			VegaDir: h.Dir(),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		if !result.Success {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(result)
+			return
+		}
+
+		log.Printf("[CLEANUP] Goal %s branch cleaned up successfully", goalID)
+
+		// Emit SSE event for cleanup
+		h.EmitEvent("goal_cleanup", map[string]interface{}{
+			"goal_id": goalID,
+			"project": data.Project,
+			"branch":  data.Branch,
+		})
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    data,
+		})
+	}
+}
+
+// ProjectSummary is a simplified project info for the API
+type ProjectSummary struct {
+	Name       string `json:"name"`
+	BaseBranch string `json:"base_branch"`
+	Workspace  string `json:"workspace,omitempty"`
+	Upstream   string `json:"upstream,omitempty"`
+}
+
+// handleProjects handles GET /api/projects - lists all projects
+func handleProjects(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		projects, err := operations.ListProjects(h.Dir())
+		if err != nil {
+			http.Error(w, "Failed to list projects: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Convert to summaries
+		summaries := make([]ProjectSummary, 0, len(projects))
+		for _, p := range projects {
+			summaries = append(summaries, ProjectSummary{
+				Name:       p.Name,
+				BaseBranch: p.BaseBranch,
+				Workspace:  p.Workspace,
+				Upstream:   p.Upstream,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(summaries)
 	}
 }

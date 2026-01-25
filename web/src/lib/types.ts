@@ -77,3 +77,10 @@ export interface Activity {
   message: string
   timestamp: string
 }
+
+export interface Project {
+  name: string
+  base_branch: string
+  workspace?: string
+  upstream?: string
+}

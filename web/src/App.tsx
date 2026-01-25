@@ -213,7 +213,7 @@ function AppContent() {
           />
           <Route
             path="/goals"
-            element={<Goals goals={goals} loading={loading} onGoalClick={handleGoalClick} />}
+            element={<Goals goals={goals} loading={loading} onGoalClick={handleGoalClick} onRefresh={fetchGoals} />}
           />
           <Route
             path="/history"
