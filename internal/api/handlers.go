@@ -28,7 +28,7 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, p *goals.Parser) {
 
 // AskRequest is the request body for POST /api/ask
 type AskRequest struct {
-	GoalID    int          `json:"goal_id"`
+	GoalID    string       `json:"goal_id"`
 	SessionID string       `json:"session_id"`
 	Question  string       `json:"question"`
 	Options   []hub.Option `json:"options,omitempty"`
@@ -132,7 +132,7 @@ func handleHealth() http.HandlerFunc {
 
 // ExecutorRegisterRequest is the request body for POST /api/executor/register
 type ExecutorRegisterRequest struct {
-	GoalID    int    `json:"goal_id"`
+	GoalID    string `json:"goal_id"`
 	SessionID string `json:"session_id"`
 	CWD       string `json:"cwd"`
 }
@@ -145,7 +145,7 @@ type ExecutorRegisterResponse struct {
 
 // ExecutorStopRequest is the request body for POST /api/executor/stop
 type ExecutorStopRequest struct {
-	GoalID    int    `json:"goal_id"`
+	GoalID    string `json:"goal_id"`
 	SessionID string `json:"session_id"`
 	Reason    string `json:"reason,omitempty"`
 }
@@ -265,12 +265,12 @@ func handleGoals(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 		questions := h.GetPendingQuestions()
 
 		// Build executor and question maps by goal ID
-		executorsByGoal := make(map[int]int)
+		executorsByGoal := make(map[string]int)
 		for _, e := range executors {
 			executorsByGoal[e.GoalID]++
 		}
 
-		questionsByGoal := make(map[int]int)
+		questionsByGoal := make(map[string]int)
 		for _, q := range questions {
 			questionsByGoal[q.GoalID]++
 		}
@@ -328,11 +328,7 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			return
 		}
 
-		id, err := strconv.Atoi(parts[0])
-		if err != nil {
-			http.Error(w, "Invalid goal ID", http.StatusBadRequest)
-			return
-		}
+		id := parts[0] // Goal ID can be numeric ("10") or hash ("4fd584d")
 
 		// Route to appropriate handler
 		if len(parts) == 1 {
@@ -356,7 +352,7 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 }
 
 // handleGoalDetail handles GET /api/goals/:id - returns goal detail with Q&A
-func handleGoalDetail(h *hub.Hub, p *goals.Parser, id int) http.HandlerFunc {
+func handleGoalDetail(h *hub.Hub, p *goals.Parser, id string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -412,9 +408,9 @@ func handleGoalDetail(h *hub.Hub, p *goals.Parser, id int) http.HandlerFunc {
 }
 
 // handleGoalSpawn handles POST /api/goals/:id/spawn - spawns an executor
-func handleGoalSpawn(h *hub.Hub, goalID int) http.HandlerFunc {
+func handleGoalSpawn(h *hub.Hub, goalID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[SPAWN] Received spawn request for Goal #%d from %s", goalID, r.RemoteAddr)
+		log.Printf("[SPAWN] Received spawn request for Goal #%s from %s", goalID, r.RemoteAddr)
 
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -429,14 +425,14 @@ func handleGoalSpawn(h *hub.Hub, goalID int) http.HandlerFunc {
 			}
 		}
 
-		log.Printf("[SPAWN] Processing spawn for Goal #%d, context: %q", goalID, req.Context)
+		log.Printf("[SPAWN] Processing spawn for Goal #%s, context: %q", goalID, req.Context)
 
 		result := h.SpawnExecutor(hub.SpawnRequest{
 			GoalID:  goalID,
 			Context: req.Context,
 		})
 
-		log.Printf("[SPAWN] Result for Goal #%d: success=%v, message=%s", goalID, result.Success, result.Message)
+		log.Printf("[SPAWN] Result for Goal #%s: success=%v, message=%s", goalID, result.Success, result.Message)
 
 		w.Header().Set("Content-Type", "application/json")
 		if !result.Success {
@@ -447,7 +443,7 @@ func handleGoalSpawn(h *hub.Hub, goalID int) http.HandlerFunc {
 }
 
 // handleGoalStatus handles GET /api/goals/:id/status - returns planning file status
-func handleGoalStatus(h *hub.Hub, goalID int) http.HandlerFunc {
+func handleGoalStatus(h *hub.Hub, goalID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -472,7 +468,7 @@ type OutputResponse struct {
 }
 
 // handleGoalOutput handles GET /api/goals/:id/output - returns executor output
-func handleGoalOutput(h *hub.Hub, goalID int) http.HandlerFunc {
+func handleGoalOutput(h *hub.Hub, goalID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

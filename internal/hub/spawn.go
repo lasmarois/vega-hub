@@ -11,7 +11,7 @@ import (
 
 // SpawnRequest contains parameters for spawning an executor
 type SpawnRequest struct {
-	GoalID  int    `json:"goal_id"`
+	GoalID  string `json:"goal_id"`
 	Context string `json:"context,omitempty"` // Optional additional context/instructions
 }
 
@@ -38,7 +38,7 @@ func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 			h.mu.RUnlock()
 			return SpawnResult{
 				Success: false,
-				Message: fmt.Sprintf("Executor already running for Goal #%d (session: %s)", req.GoalID, e.SessionID),
+				Message: fmt.Sprintf("Executor already running for Goal #%s (session: %s)", req.GoalID, e.SessionID),
 			}
 		}
 	}
@@ -111,7 +111,7 @@ func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 
 	return SpawnResult{
 		Success:   true,
-		Message:   fmt.Sprintf("Executor spawned for Goal #%d (PID: %d)", req.GoalID, cmd.Process.Pid),
+		Message:   fmt.Sprintf("Executor spawned for Goal #%s (PID: %d)", req.GoalID, cmd.Process.Pid),
 		Worktree:  worktree,
 		SessionID: sessionID,
 	}
@@ -125,7 +125,7 @@ func generateSessionID() string {
 }
 
 // findWorktree finds the worktree directory for a goal
-func (h *Hub) findWorktree(goalID int) (string, error) {
+func (h *Hub) findWorktree(goalID string) (string, error) {
 	workspacesDir := filepath.Join(h.dir, "workspaces")
 
 	// List all project directories
@@ -134,7 +134,7 @@ func (h *Hub) findWorktree(goalID int) (string, error) {
 		return "", fmt.Errorf("failed to read workspaces: %w", err)
 	}
 
-	goalPrefix := fmt.Sprintf("goal-%d-", goalID)
+	goalPrefix := fmt.Sprintf("goal-%s-", goalID)
 
 	for _, project := range projects {
 		if !project.IsDir() {
@@ -154,10 +154,10 @@ func (h *Hub) findWorktree(goalID int) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("no worktree found for goal %d", goalID)
+	return "", fmt.Errorf("no worktree found for goal %s", goalID)
 }
 
 // GetWorktreePath returns the worktree path for a goal, if it exists
-func (h *Hub) GetWorktreePath(goalID int) (string, error) {
+func (h *Hub) GetWorktreePath(goalID string) (string, error) {
 	return h.findWorktree(goalID)
 }

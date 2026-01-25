@@ -25,9 +25,9 @@ fi
 VEGA_HUB_PORT="${VEGA_HUB_PORT:-8080}"
 VEGA_HUB_HOST="${VEGA_HUB_HOST:-localhost}"
 
-# Extract goal ID from cwd (worktree path like .../goal-10-add-auth)
+# Extract goal ID from cwd (worktree path like .../goal-10-add-auth or .../goal-4fd584d-add-auth)
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
-GOAL_ID=$(basename "$CWD" | grep -oP 'goal-\K\d+' || echo "0")
+GOAL_ID=$(basename "$CWD" | grep -oP 'goal-\K[0-9a-f]+' || echo "0")
 
 # Extract session ID
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // "unknown"')
@@ -46,7 +46,7 @@ fi
 
 # Build request for vega-hub
 REQUEST=$(jq -n \
-    --argjson goal_id "$GOAL_ID" \
+    --arg goal_id "$GOAL_ID" \
     --arg session_id "$SESSION_ID" \
     --arg question "$QUESTION" \
     --argjson options "$OPTIONS" \

@@ -32,7 +32,7 @@ type Hub struct {
 // Executor represents an active executor session
 type Executor struct {
 	SessionID string    `json:"session_id"`
-	GoalID    int       `json:"goal_id"`
+	GoalID    string    `json:"goal_id"`
 	CWD       string    `json:"cwd"`
 	StartedAt time.Time `json:"started_at"`
 	LogFile   string    `json:"log_file,omitempty"`
@@ -41,7 +41,7 @@ type Executor struct {
 // Question represents a pending question from an executor
 type Question struct {
 	ID        string    `json:"id"`
-	GoalID    int       `json:"goal_id"`
+	GoalID    string    `json:"goal_id"`
 	SessionID string    `json:"session_id"`
 	Question  string    `json:"question"`
 	Options   []Option  `json:"options,omitempty"`
@@ -75,7 +75,7 @@ func New(dir string) *Hub {
 }
 
 // RegisterExecutor registers a new executor session and returns context
-func (h *Hub) RegisterExecutor(goalID int, sessionID, cwd string) string {
+func (h *Hub) RegisterExecutor(goalID string, sessionID, cwd string) string {
 	logFile := filepath.Join(cwd, ".executor-output.log")
 	h.mu.Lock()
 	h.executors[sessionID] = &Executor{
@@ -109,7 +109,7 @@ func (h *Hub) RegisterExecutor(goalID int, sessionID, cwd string) string {
 }
 
 // StopExecutor marks an executor session as stopped
-func (h *Hub) StopExecutor(goalID int, sessionID, reason string) {
+func (h *Hub) StopExecutor(goalID string, sessionID, reason string) {
 	// Get executor info before removing (for log file path)
 	h.mu.Lock()
 	executor := h.executors[sessionID]
@@ -155,9 +155,9 @@ func (h *Hub) GetActiveExecutors() []*Executor {
 }
 
 // buildExecutorContext builds the context string for an executor
-func (h *Hub) buildExecutorContext(goalID int, sessionID, cwd string) string {
+func (h *Hub) buildExecutorContext(goalID string, sessionID, cwd string) string {
 	return "[EXECUTOR SESSION START]\n" +
-		"Working on Goal #" + itoa(goalID) + "\n" +
+		"Working on Goal #" + goalID + "\n" +
 		"Directory: " + cwd + "\n" +
 		"vega-hub: connected\n\n" +
 		"IMPORTANT REMINDERS:\n" +
@@ -165,16 +165,16 @@ func (h *Hub) buildExecutorContext(goalID int, sessionID, cwd string) string {
 		"2. Planning files go at worktree root: task_plan.md, findings.md, progress.md\n" +
 		"3. You can use AskUserQuestion to ask the human questions directly (via vega-hub)\n" +
 		"4. Before completing, you MUST:\n" +
-		"   - Archive planning files to docs/planning/history/goal-" + itoa(goalID) + "/\n" +
+		"   - Archive planning files to docs/planning/history/goal-" + goalID + "/\n" +
 		"   - Commit the archive\n" +
 		"   - Report to manager for approval\n" +
-		"5. Commit messages must include 'Goal: #" + itoa(goalID) + "'"
+		"5. Commit messages must include 'Goal: #" + goalID + "'"
 }
 
 // sendDesktopNotification sends a desktop notification (Linux/macOS)
-func (h *Hub) sendDesktopNotification(goalID int, reason string) {
+func (h *Hub) sendDesktopNotification(goalID string, reason string) {
 	title := "Executor Stopped"
-	message := "Goal #" + itoa(goalID)
+	message := "Goal #" + goalID
 	if reason != "" {
 		message += " - " + reason
 	}
@@ -333,7 +333,7 @@ func (h *Hub) readLastLines(filePath string, n int) string {
 }
 
 // GetExecutorOutput returns the full output for a goal's executor
-func (h *Hub) GetExecutorOutput(goalID int) (string, error) {
+func (h *Hub) GetExecutorOutput(goalID string) (string, error) {
 	worktree, err := h.findWorktree(goalID)
 	if err != nil {
 		return "", err
@@ -349,7 +349,7 @@ func (h *Hub) GetExecutorOutput(goalID int) (string, error) {
 }
 
 // GetExecutorOutputTail returns the last N lines of output for a goal's executor
-func (h *Hub) GetExecutorOutputTail(goalID int, lines int) (string, error) {
+func (h *Hub) GetExecutorOutputTail(goalID string, lines int) (string, error) {
 	worktree, err := h.findWorktree(goalID)
 	if err != nil {
 		return "", err

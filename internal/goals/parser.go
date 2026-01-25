@@ -11,7 +11,7 @@ import (
 
 // Goal represents a goal from the registry
 type Goal struct {
-	ID       int      `json:"id"`
+	ID       string   `json:"id"` // Can be numeric ("10") or hash ("4fd584d")
 	Title    string   `json:"title"`
 	Projects []string `json:"projects"`
 	Status   string   `json:"status"` // "active", "iced", "completed"
@@ -133,8 +133,8 @@ func parseActiveGoal(parts []string) *Goal {
 		return nil
 	}
 
-	id, err := strconv.Atoi(parts[0])
-	if err != nil {
+	id := strings.TrimSpace(parts[0])
+	if id == "" {
 		return nil
 	}
 
@@ -153,8 +153,8 @@ func parseIcedGoal(parts []string) *Goal {
 		return nil
 	}
 
-	id, err := strconv.Atoi(parts[0])
-	if err != nil {
+	id := strings.TrimSpace(parts[0])
+	if id == "" {
 		return nil
 	}
 
@@ -173,8 +173,8 @@ func parseCompletedGoal(parts []string) *Goal {
 		return nil
 	}
 
-	id, err := strconv.Atoi(parts[0])
-	if err != nil {
+	id := strings.TrimSpace(parts[0])
+	if id == "" {
 		return nil
 	}
 
@@ -223,16 +223,16 @@ type Task struct {
 }
 
 // ParseGoalDetail reads and parses a specific goal file
-func (p *Parser) ParseGoalDetail(id int) (*GoalDetail, error) {
-	goalPath := filepath.Join(p.dir, "goals", "active", strconv.Itoa(id)+".md")
+func (p *Parser) ParseGoalDetail(id string) (*GoalDetail, error) {
+	goalPath := filepath.Join(p.dir, "goals", "active", id+".md")
 	goalStatus := "active"
 
 	// Try active first, then iced, then completed
 	if _, err := os.Stat(goalPath); os.IsNotExist(err) {
-		goalPath = filepath.Join(p.dir, "goals", "iced", strconv.Itoa(id)+".md")
+		goalPath = filepath.Join(p.dir, "goals", "iced", id+".md")
 		goalStatus = "iced"
 		if _, err := os.Stat(goalPath); os.IsNotExist(err) {
-			goalPath = filepath.Join(p.dir, "goals", "history", strconv.Itoa(id)+".md")
+			goalPath = filepath.Join(p.dir, "goals", "history", id+".md")
 			goalStatus = "completed"
 		}
 	}
@@ -253,7 +253,7 @@ func (p *Parser) ParseGoalDetail(id int) (*GoalDetail, error) {
 	phaseNum := 0
 
 	// Regex patterns
-	titleRe := regexp.MustCompile(`^# Goal #(\d+): (.+)$`)
+	titleRe := regexp.MustCompile(`^# Goal #([0-9a-f]+): (.+)$`)
 	phaseRe := regexp.MustCompile(`^### Phase (\d+): (.+)$`)
 	taskRe := regexp.MustCompile(`^- \[([ x])\] (.+)$`)
 

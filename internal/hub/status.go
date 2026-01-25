@@ -31,7 +31,7 @@ type PhaseStatus struct {
 }
 
 // GetGoalStatus reads planning files and returns the current status
-func (h *Hub) GetGoalStatus(goalID int) (*GoalStatus, error) {
+func (h *Hub) GetGoalStatus(goalID string) (*GoalStatus, error) {
 	status := &GoalStatus{
 		HasWorktree: false,
 	}

@@ -20,7 +20,7 @@ func NewWriter(dir string) *Writer {
 }
 
 // WriteQA appends a Q&A entry to the goal's markdown file
-func (w *Writer) WriteQA(goalID int, sessionID, question, answer string) error {
+func (w *Writer) WriteQA(goalID string, sessionID, question, answer string) error {
 	if w.dir == "" {
 		return nil // No directory configured, skip
 	}
@@ -29,7 +29,7 @@ func (w *Writer) WriteQA(goalID int, sessionID, question, answer string) error {
 	defer w.mu.Unlock()
 
 	// Find the goal file
-	goalFile := filepath.Join(w.dir, "goals", "active", fmt.Sprintf("%d.md", goalID))
+	goalFile := filepath.Join(w.dir, "goals", "active", goalID+".md")
 
 	// Check if file exists
 	if _, err := os.Stat(goalFile); os.IsNotExist(err) {
@@ -47,7 +47,7 @@ func (w *Writer) WriteQA(goalID int, sessionID, question, answer string) error {
 	entry := fmt.Sprintf(`
 ---
 
-**%s** | Goal #%d | Executor session %s
+**%s** | Goal #%s | Executor session %s
 **Q:** %s
 **A:** %s
 `, timestamp, goalID, sessionID, question, answer)
@@ -74,7 +74,7 @@ func (w *Writer) WriteQA(goalID int, sessionID, question, answer string) error {
 }
 
 // WriteExecutorEvent appends an executor lifecycle event to the goal's markdown file
-func (w *Writer) WriteExecutorEvent(goalID int, sessionID, eventType, detail string) error {
+func (w *Writer) WriteExecutorEvent(goalID string, sessionID, eventType, detail string) error {
 	if w.dir == "" {
 		return nil // No directory configured, skip
 	}
@@ -83,7 +83,7 @@ func (w *Writer) WriteExecutorEvent(goalID int, sessionID, eventType, detail str
 	defer w.mu.Unlock()
 
 	// Find the goal file
-	goalFile := filepath.Join(w.dir, "goals", "active", fmt.Sprintf("%d.md", goalID))
+	goalFile := filepath.Join(w.dir, "goals", "active", goalID+".md")
 
 	// Check if file exists
 	if _, err := os.Stat(goalFile); os.IsNotExist(err) {
