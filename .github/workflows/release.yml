@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - master
-    paths:
-      - 'VERSION'
 
 permissions:
   contents: write
@@ -19,13 +17,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Check VERSION and CHANGELOG
         id: check
         run: |
+          # Check if VERSION file exists
+          if [[ ! -f VERSION ]]; then
+            echo "No VERSION file found, skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "version=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           VERSION=$(cat VERSION | tr -d '\n\r ')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          if [[ -z "$VERSION" ]]; then
+            echo "VERSION file is empty, skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Check if tag already exists
+          if git ls-remote --tags origin | grep -q "refs/tags/v$VERSION$"; then
+            echo "Tag v$VERSION already exists, skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
 
           # Check if CHANGELOG has entry for this version
           if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
@@ -36,13 +55,8 @@ jobs:
             exit 1
           fi
 
-          # Check if tag already exists
-          if git ls-remote --tags origin | grep -q "refs/tags/v$VERSION"; then
-            echo "Tag v$VERSION already exists, skipping release"
-            echo "should_release=false" >> $GITHUB_OUTPUT
-          else
-            echo "should_release=true" >> $GITHUB_OUTPUT
-          fi
+          echo "Will create release v$VERSION"
+          echo "should_release=true" >> $GITHUB_OUTPUT
 
   build:
     needs: check-release
