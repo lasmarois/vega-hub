@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-01-25
+
+### Added
+- `vega-hub goal cleanup` - Delete branch after MR/PR has been merged
+  - Validates goal is in history (completed)
+  - Finds and deletes the goal branch
+  - AI-friendly error handling
+
+This completes the MR/PR workflow:
+1. `goal complete --no-merge` → preserves branch
+2. Create MR/PR externally
+3. MR/PR merged
+4. `goal cleanup` → deletes branch
+
 ## [0.4.0] - 2026-01-25
 
 ### Added

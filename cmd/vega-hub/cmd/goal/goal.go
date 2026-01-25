@@ -14,7 +14,8 @@ Available subcommands:
   list      List all goals
   create    Create a new goal with worktree
   complete  Complete a goal (merge, cleanup)
-  ice       Pause a goal for later`,
+  ice       Pause a goal for later
+  cleanup   Delete branch after MR/PR merged`,
 }
 
 func init() {
