@@ -7,6 +7,7 @@ import (
 	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/executor"
 	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/goal"
 	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/project"
+	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/worktree"
 	"github.com/lasmarois/vega-hub/internal/cli"
 	"github.com/spf13/cobra"
 )
@@ -60,4 +61,5 @@ func init() {
 	rootCmd.AddCommand(project.ProjectCmd)
 	rootCmd.AddCommand(executor.ExecutorCmd)
 	rootCmd.AddCommand(credentials.CredentialsCmd)
+	rootCmd.AddCommand(worktree.WorktreeCmd)
 }
