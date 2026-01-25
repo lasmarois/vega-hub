@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/goal"
+	"github.com/lasmarois/vega-hub/cmd/vega-hub/cmd/project"
 	"github.com/lasmarois/vega-hub/internal/cli"
 	"github.com/spf13/cobra"
 )
@@ -54,4 +55,5 @@ func init() {
 
 	// Add subcommands
 	rootCmd.AddCommand(goal.GoalCmd)
+	rootCmd.AddCommand(project.ProjectCmd)
 }
