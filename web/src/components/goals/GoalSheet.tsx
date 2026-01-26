@@ -30,7 +30,7 @@ import { EmptyState } from '@/components/shared/EmptyState'
 import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus } from '@/lib/types'
-import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog, CreateMRDialog, RecreateWorktreeDialog } from './GoalActions'
+import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog, CreateMRDialog, RecreateWorktreeDialog, DeleteGoalDialog } from './GoalActions'
 import { ChatThread } from './ChatThread'
 
 interface GoalSheetProps {
@@ -56,6 +56,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false)
   const [createMRDialogOpen, setCreateMRDialogOpen] = useState(false)
   const [recreateWorktreeDialogOpen, setRecreateWorktreeDialogOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
 
   const handleAnswer = async (questionId: string, answer: string) => {
     if (!answer?.trim()) return
@@ -343,6 +344,19 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                     Resume Goal
                   </Button>
                 )}
+
+                {/* Delete - available for all goals */}
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start gap-2 text-red-600"
+                  onClick={() => {
+                    setActionMenuOpen(false)
+                    setDeleteDialogOpen(true)
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete Goal
+                </Button>
               </PopoverContent>
             </Popover>
           </div>
@@ -836,6 +850,16 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
           onSuccess={onRefresh}
         />
       )}
+
+      <DeleteGoalDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        goal={goal}
+        onSuccess={() => {
+          onRefresh()
+          onOpenChange(false) // Close the sheet after deletion
+        }}
+      />
     </Sheet>
   )
 }

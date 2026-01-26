@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { AlertTriangle, CheckCircle2, Pause, Trash2, Plus, Play, RefreshCw, GitBranch, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Pause, Trash2, Plus, Play, RefreshCw, GitBranch, XCircle, Loader2, AlertCircle } from 'lucide-react'
 import type { GoalDetail, Project } from '@/lib/types'
 
 // Complete Goal Dialog
@@ -995,6 +995,312 @@ export function RecreateWorktreeDialog({
           {canRecreate && (
             <Button onClick={handleRecreate} disabled={loading}>
               {loading ? 'Recreating...' : 'Recreate Worktree'}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// Delete Goal Dialog
+interface DeleteGoalDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  goal: GoalDetail
+  onSuccess: () => void
+}
+
+interface PreflightWarning {
+  level: 'error' | 'warning' | 'info'
+  message: string
+  details?: string[]
+}
+
+interface PreflightResult {
+  success: boolean
+  require_force?: boolean
+  warnings?: PreflightWarning[]
+  error?: string
+}
+
+type DialogState = 'loading' | 'warnings' | 'confirm' | 'deleting'
+
+export function DeleteGoalDialog({
+  open,
+  onOpenChange,
+  goal,
+  onSuccess,
+}: DeleteGoalDialogProps) {
+  const [state, setState] = useState<DialogState>('loading')
+  const [deleteBranch, setDeleteBranch] = useState(true)
+  const [force, setForce] = useState(false)
+  const [requireForce, setRequireForce] = useState(false)
+  const [warnings, setWarnings] = useState<PreflightWarning[]>([])
+  const [error, setError] = useState<string | null>(null)
+
+  // Run preflight check when dialog opens
+  const runPreflightCheck = async () => {
+    setState('loading')
+    setError(null)
+    setWarnings([])
+    setRequireForce(false)
+    setForce(false)
+
+    try {
+      const res = await fetch(`/api/goals/${goal.id}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: false, delete_branch: deleteBranch }),
+      })
+
+      const data: PreflightResult = await res.json()
+
+      if (data.success) {
+        // No issues - go straight to confirm
+        setState('confirm')
+      } else if (data.require_force) {
+        // Has warnings that require force
+        setWarnings(data.warnings || [])
+        setRequireForce(true)
+        setState('warnings')
+      } else {
+        // Error that can't be forced
+        setError(data.error || 'Cannot delete this goal')
+        setState('warnings')
+      }
+    } catch (err) {
+      setError('Network error')
+      setState('warnings')
+    }
+  }
+
+  // Handle dialog open/close
+  const handleOpenChange = (newOpen: boolean) => {
+    if (newOpen) {
+      runPreflightCheck()
+    } else {
+      // Reset state when closing
+      setState('loading')
+      setDeleteBranch(true)
+      setForce(false)
+      setRequireForce(false)
+      setWarnings([])
+      setError(null)
+    }
+    onOpenChange(newOpen)
+  }
+
+  // Re-run preflight when deleteBranch changes (only in warnings/confirm state)
+  const handleDeleteBranchChange = async (checked: boolean) => {
+    setDeleteBranch(checked)
+    // Re-run preflight with new setting
+    setState('loading')
+    setError(null)
+    setWarnings([])
+    setRequireForce(false)
+    setForce(false)
+
+    try {
+      const res = await fetch(`/api/goals/${goal.id}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: false, delete_branch: checked }),
+      })
+
+      const data: PreflightResult = await res.json()
+
+      if (data.success) {
+        setState('confirm')
+      } else if (data.require_force) {
+        setWarnings(data.warnings || [])
+        setRequireForce(true)
+        setState('warnings')
+      } else {
+        setError(data.error || 'Cannot delete this goal')
+        setState('warnings')
+      }
+    } catch (err) {
+      setError('Network error')
+      setState('warnings')
+    }
+  }
+
+  // Execute the actual deletion
+  const handleDelete = async () => {
+    setState('deleting')
+    setError(null)
+
+    try {
+      const res = await fetch(`/api/goals/${goal.id}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true, delete_branch: deleteBranch }),
+      })
+
+      const data = await res.json()
+
+      if (data.success) {
+        onSuccess()
+        handleOpenChange(false)
+      } else {
+        setError(data.error || 'Failed to delete goal')
+        setState('warnings')
+      }
+    } catch (err) {
+      setError('Network error')
+      setState('warnings')
+    }
+  }
+
+  const canDelete = state === 'confirm' || (state === 'warnings' && (!requireForce || force))
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-red-600">
+            <Trash2 className="h-5 w-5" />
+            Delete Goal
+          </DialogTitle>
+          <DialogDescription>
+            Delete goal #{goal.id}?
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-4">
+          {/* Loading state */}
+          {state === 'loading' && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-muted-foreground">Checking for issues...</span>
+            </div>
+          )}
+
+          {/* Deleting state */}
+          {state === 'deleting' && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-red-500" />
+              <span className="ml-2 text-muted-foreground">Deleting goal...</span>
+            </div>
+          )}
+
+          {/* Warnings/Confirm state */}
+          {(state === 'warnings' || state === 'confirm') && (
+            <>
+              <div className="text-sm">
+                <strong>Title:</strong> {goal.title}
+              </div>
+
+              {/* Display warnings */}
+              {warnings.length > 0 && (
+                <div className="space-y-3">
+                  {warnings.map((warning, i) => (
+                    <div
+                      key={i}
+                      className={`p-3 rounded-md text-sm ${
+                        warning.level === 'error'
+                          ? 'bg-red-50 border border-red-200 text-red-700'
+                          : warning.level === 'warning'
+                          ? 'bg-yellow-50 border border-yellow-200 text-yellow-700'
+                          : 'bg-blue-50 border border-blue-200 text-blue-700'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        {warning.level === 'error' ? (
+                          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                        )}
+                        <div className="flex-1">
+                          <div className="font-medium">{warning.message}</div>
+                          {warning.details && warning.details.length > 0 && (
+                            <ul className="mt-1 text-xs space-y-0.5">
+                              {warning.details.slice(0, 5).map((detail, j) => (
+                                <li key={j}>• {detail}</li>
+                              ))}
+                              {warning.details.length > 5 && (
+                                <li className="text-muted-foreground">
+                                  ... and {warning.details.length - 5} more
+                                </li>
+                              )}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Network/API error */}
+              {error && !requireForce && (
+                <div className="text-sm text-red-500 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  {error}
+                </div>
+              )}
+
+              {/* Checkboxes */}
+              <div className="space-y-3 pt-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={deleteBranch}
+                    onChange={(e) => handleDeleteBranchChange(e.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  Delete branch from git
+                </label>
+
+                {requireForce && (
+                  <label className="flex items-center gap-2 text-sm text-red-600 font-medium">
+                    <input
+                      type="checkbox"
+                      checked={force}
+                      onChange={(e) => setForce(e.target.checked)}
+                      className="rounded border-red-300"
+                    />
+                    Force delete (required due to warnings above)
+                  </label>
+                )}
+              </div>
+
+              {/* Final warning */}
+              <div className="p-3 bg-muted rounded-md text-sm text-muted-foreground">
+                <strong>This action cannot be undone.</strong>
+                {deleteBranch && ' The git branch will be permanently deleted.'}
+              </div>
+
+              {/* Error from delete attempt */}
+              {error && requireForce && (
+                <div className="text-sm text-red-500 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  {error}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <DialogFooter>
+          {(state === 'warnings' || state === 'confirm') && (
+            <>
+              <Button variant="outline" onClick={() => handleOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={!canDelete}
+              >
+                Delete Goal
+              </Button>
+            </>
+          )}
+          {(state === 'loading' || state === 'deleting') && (
+            <Button variant="outline" onClick={() => handleOpenChange(false)}>
+              Cancel
             </Button>
           )}
         </DialogFooter>
