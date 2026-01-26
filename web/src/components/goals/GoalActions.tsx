@@ -693,3 +693,176 @@ export function ResumeGoalDialog({
     </Dialog>
   )
 }
+
+// Create MR/PR Dialog
+interface CreateMRDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  goalId: string
+  goalTitle: string
+  baseBranch: string
+  lastCommitMessage?: string
+  onSuccess: () => void
+}
+
+export function CreateMRDialog({
+  open,
+  onOpenChange,
+  goalId,
+  goalTitle,
+  baseBranch,
+  lastCommitMessage,
+  onSuccess,
+}: CreateMRDialogProps) {
+  // Pre-fill title with goal title or last commit message
+  const defaultTitle = lastCommitMessage || goalTitle
+  const [title, setTitle] = useState(defaultTitle)
+  const [description, setDescription] = useState('')
+  const [targetBranch, setTargetBranch] = useState(baseBranch)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [mrUrl, setMrUrl] = useState<string | null>(null)
+  const [mrService, setMrService] = useState<string | null>(null)
+
+  // Reset form when dialog opens
+  const handleOpenChange = (newOpen: boolean) => {
+    if (newOpen) {
+      setTitle(defaultTitle)
+      setDescription('')
+      setTargetBranch(baseBranch)
+      setError(null)
+      setMrUrl(null)
+      setMrService(null)
+    }
+    onOpenChange(newOpen)
+  }
+
+  const handleCreateMR = async () => {
+    if (!title.trim()) {
+      setError('Title is required')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch(`/api/goals/${goalId}/create-mr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title.trim(),
+          description: description.trim() || undefined,
+          target_branch: targetBranch || undefined,
+        }),
+      })
+
+      const data = await res.json()
+      if (data.success) {
+        setMrUrl(data.mr_url)
+        setMrService(data.service)
+        onSuccess()
+      } else {
+        setError(data.error || 'Failed to create MR/PR')
+      }
+    } catch (err) {
+      setError('Network error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Plus className="h-5 w-5 text-purple-500" />
+            Create Merge Request
+          </DialogTitle>
+          <DialogDescription>
+            Create a merge/pull request for goal #{goalId}
+          </DialogDescription>
+        </DialogHeader>
+
+        {mrUrl ? (
+          // Success state - show MR link
+          <div className="space-y-4 py-4">
+            <div className="p-4 bg-green-50 border border-green-200 rounded-md">
+              <div className="flex items-center gap-2 text-green-700 font-medium mb-2">
+                <CheckCircle2 className="h-5 w-5" />
+                {mrService === 'github' ? 'Pull Request' : 'Merge Request'} Created!
+              </div>
+              <a
+                href={mrUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-blue-600 hover:underline break-all"
+              >
+                {mrUrl}
+              </a>
+            </div>
+          </div>
+        ) : (
+          // Form state
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Title</label>
+              <Input
+                placeholder="MR/PR title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Description (optional)</label>
+              <textarea
+                placeholder="Describe the changes..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Target Branch</label>
+              <Input
+                placeholder="main"
+                value={targetBranch}
+                onChange={(e) => setTargetBranch(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                The branch to merge into (defaults to base branch)
+              </p>
+            </div>
+
+            {error && (
+              <div className="text-sm text-red-500 flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />
+                {error}
+              </div>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          {mrUrl ? (
+            <Button onClick={() => handleOpenChange(false)}>
+              Done
+            </Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => handleOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleCreateMR} disabled={loading || !title.trim()}>
+                {loading ? 'Creating...' : 'Create MR/PR'}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}

@@ -27,10 +27,10 @@ import {
 } from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning } from 'lucide-react'
+import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus } from '@/lib/types'
-import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog } from './GoalActions'
+import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog, CreateMRDialog } from './GoalActions'
 import { ChatThread } from './ChatThread'
 
 interface GoalSheetProps {
@@ -54,6 +54,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
   const [stopDialogOpen, setStopDialogOpen] = useState(false)
   const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false)
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false)
+  const [createMRDialogOpen, setCreateMRDialogOpen] = useState(false)
 
   const handleAnswer = async (questionId: string, answer: string) => {
     if (!answer?.trim()) return
@@ -461,6 +462,31 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                         </div>
                       </div>
                     )}
+                    {/* Create MR button - only show when there are commits ahead */}
+                    {goal.branch_info.ahead > 0 && (
+                      <div className="mt-3 pt-3 border-t">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full gap-2"
+                          onClick={() => setCreateMRDialogOpen(true)}
+                          disabled={goal.branch_info.uncommitted_files > 0}
+                          title={goal.branch_info.uncommitted_files > 0 
+                            ? 'Commit or stash your changes before creating an MR' 
+                            : 'Create a merge/pull request'}
+                        >
+                          <GitPullRequest className="h-4 w-4" />
+                          {goal.branch_info.uncommitted_files > 0 
+                            ? 'Commit changes first' 
+                            : 'Create MR/PR'}
+                        </Button>
+                        {goal.branch_info.uncommitted_files > 0 && (
+                          <p className="text-xs text-yellow-600 mt-1.5 text-center">
+                            You have uncommitted changes
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
@@ -723,6 +749,18 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
         goal={goal}
         onSuccess={onRefresh}
       />
+
+      {goal.branch_info && (
+        <CreateMRDialog
+          open={createMRDialogOpen}
+          onOpenChange={setCreateMRDialogOpen}
+          goalId={goal.id}
+          goalTitle={goal.title}
+          baseBranch={goal.branch_info.base_branch}
+          lastCommitMessage={goal.branch_info.last_commit_message}
+          onSuccess={onRefresh}
+        />
+      )}
     </Sheet>
   )
 }
