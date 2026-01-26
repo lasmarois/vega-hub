@@ -1,12 +1,14 @@
 package worktree
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/lasmarois/vega-hub/internal/cli"
 	"github.com/lasmarois/vega-hub/internal/goals"
@@ -195,6 +197,11 @@ func runCreate(c *cobra.Command, args []string) {
 		cli.Warn("Failed to copy hooks to worktree: %v", err)
 	}
 
+	// Write worktree metadata to goal file
+	if err := writeWorktreeToGoalFile(vegaDir, goalID, project, worktreePath, goalBranch, baseBranch); err != nil {
+		cli.Warn("Failed to write worktree metadata to goal file: %v", err)
+	}
+
 	// Success output
 	result := CreateResult{
 		GoalID:     goalID,
@@ -329,4 +336,157 @@ func copyFile(src, dst string) error {
 	}
 
 	return os.WriteFile(dst, content, info.Mode())
+}
+
+// writeWorktreeToGoalFile appends or updates the Worktree section in the goal markdown file
+func writeWorktreeToGoalFile(vegaDir, goalID, project, worktreePath, branch, baseBranch string) error {
+	// Find goal file - check active, then iced
+	goalPath := filepath.Join(vegaDir, "goals", "active", goalID+".md")
+	if _, err := os.Stat(goalPath); os.IsNotExist(err) {
+		goalPath = filepath.Join(vegaDir, "goals", "iced", goalID+".md")
+		if _, err := os.Stat(goalPath); os.IsNotExist(err) {
+			return fmt.Errorf("goal file not found for %s", goalID)
+		}
+	}
+
+	// Read the current file
+	content, err := os.ReadFile(goalPath)
+	if err != nil {
+		return fmt.Errorf("failed to read goal file: %w", err)
+	}
+
+	// Calculate relative path from vega-missile root
+	relativePath := strings.TrimPrefix(worktreePath, vegaDir+"/")
+
+	// Build the worktree section
+	today := time.Now().Format("2006-01-02")
+	worktreeSection := fmt.Sprintf(`## Worktree
+- **Branch**: %s
+- **Project**: %s
+- **Path**: %s
+- **Base Branch**: %s
+- **Created**: %s
+`, branch, project, relativePath, baseBranch, today)
+
+	// Check if there's already a Worktree section
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+	inWorktreeSection := false
+	worktreeSectionFound := false
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "## Worktree") {
+			// Replace existing worktree section
+			inWorktreeSection = true
+			worktreeSectionFound = true
+			// Add the new worktree section (without trailing newline, we'll add lines)
+			newLines = append(newLines, strings.TrimSuffix(worktreeSection, "\n"))
+			continue
+		}
+
+		if inWorktreeSection {
+			// Skip until we hit the next ## section or end
+			if strings.HasPrefix(line, "## ") {
+				inWorktreeSection = false
+				newLines = append(newLines, line)
+			}
+			// Skip lines within the old worktree section
+			continue
+		}
+
+		newLines = append(newLines, line)
+	}
+
+	// If no worktree section found, append it before ## Status or at the end
+	if !worktreeSectionFound {
+		newLines = insertWorktreeSection(lines, worktreeSection)
+	}
+
+	// Write back the file
+	newContent := strings.Join(newLines, "\n")
+	if err := os.WriteFile(goalPath, []byte(newContent), 0644); err != nil {
+		return fmt.Errorf("failed to write goal file: %w", err)
+	}
+
+	return nil
+}
+
+// insertWorktreeSection inserts the worktree section in the appropriate place
+func insertWorktreeSection(lines []string, worktreeSection string) []string {
+	var result []string
+	inserted := false
+
+	// Try to insert before "## Status" or "## Executor Activity"
+	for i, line := range lines {
+		if !inserted && (strings.HasPrefix(line, "## Status") || strings.HasPrefix(line, "## Executor Activity")) {
+			// Insert worktree section before this line
+			result = append(result, "")
+			result = append(result, strings.Split(strings.TrimSuffix(worktreeSection, "\n"), "\n")...)
+			result = append(result, "")
+			inserted = true
+		}
+		result = append(result, line)
+
+		// If we're at the end and haven't inserted yet
+		if i == len(lines)-1 && !inserted {
+			result = append(result, "")
+			result = append(result, strings.Split(strings.TrimSuffix(worktreeSection, "\n"), "\n")...)
+		}
+	}
+
+	return result
+}
+
+// removeWorktreeFromGoalFile removes the Worktree section from the goal file
+// This can be called when removing a worktree to clear the metadata
+func removeWorktreeFromGoalFile(vegaDir, goalID string) error {
+	// Find goal file - check active, then iced, then history
+	goalPath := filepath.Join(vegaDir, "goals", "active", goalID+".md")
+	if _, err := os.Stat(goalPath); os.IsNotExist(err) {
+		goalPath = filepath.Join(vegaDir, "goals", "iced", goalID+".md")
+		if _, err := os.Stat(goalPath); os.IsNotExist(err) {
+			goalPath = filepath.Join(vegaDir, "goals", "history", goalID+".md")
+			if _, err := os.Stat(goalPath); os.IsNotExist(err) {
+				return nil // Goal file doesn't exist, nothing to do
+			}
+		}
+	}
+
+	file, err := os.Open(goalPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	var newLines []string
+	scanner := bufio.NewScanner(file)
+	inWorktreeSection := false
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if strings.HasPrefix(line, "## Worktree") {
+			inWorktreeSection = true
+			continue
+		}
+
+		if inWorktreeSection {
+			if strings.HasPrefix(line, "## ") {
+				inWorktreeSection = false
+				newLines = append(newLines, line)
+			}
+			// Skip lines within worktree section
+			continue
+		}
+
+		newLines = append(newLines, line)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	// Write back
+	newContent := strings.Join(newLines, "\n")
+	return os.WriteFile(goalPath, []byte(newContent), 0644)
 }
