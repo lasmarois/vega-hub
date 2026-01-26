@@ -34,6 +34,17 @@ export interface Executor {
   started_at: string
 }
 
+export interface BranchInfo {
+  branch: string
+  base_branch: string
+  ahead: number
+  behind: number
+  uncommitted_files: number
+  last_commit?: string
+  last_commit_message?: string
+  worktree_path?: string
+}
+
 export interface GoalDetail {
   id: string
   title: string
@@ -49,6 +60,7 @@ export interface GoalDetail {
   active_executors: Executor[]
   workspace_status?: 'ready' | 'missing' | 'error'
   workspace_error?: string
+  branch_info?: BranchInfo
 }
 
 export interface GoalStatus {

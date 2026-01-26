@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle } from 'lucide-react'
+import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus } from '@/lib/types'
 import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog } from './GoalActions'
@@ -401,6 +401,70 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
 
           <ScrollArea className="flex-1 min-h-0">
             <TabsContent value="overview" className="p-4 m-0">
+              {/* Branch Info */}
+              {goal.branch_info && (
+                <Card className="mb-4">
+                  <CardHeader className="p-3 pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <GitBranch className="h-4 w-4" />
+                      Branch Info
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-3 pt-0">
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Branch:</span>
+                        <code className="ml-2 text-xs bg-muted px-1.5 py-0.5 rounded">
+                          {goal.branch_info.branch}
+                        </code>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Base:</span>
+                        <code className="ml-2 text-xs bg-muted px-1.5 py-0.5 rounded">
+                          {goal.branch_info.base_branch}
+                        </code>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {goal.branch_info.ahead > 0 && (
+                          <span className="flex items-center gap-1 text-green-600">
+                            <ArrowUp className="h-3 w-3" />
+                            {goal.branch_info.ahead} ahead
+                          </span>
+                        )}
+                        {goal.branch_info.behind > 0 && (
+                          <span className="flex items-center gap-1 text-orange-600">
+                            <ArrowDown className="h-3 w-3" />
+                            {goal.branch_info.behind} behind
+                          </span>
+                        )}
+                        {goal.branch_info.ahead === 0 && goal.branch_info.behind === 0 && (
+                          <span className="text-muted-foreground">Up to date</span>
+                        )}
+                      </div>
+                      <div>
+                        {goal.branch_info.uncommitted_files > 0 ? (
+                          <span className="flex items-center gap-1 text-yellow-600">
+                            <FileWarning className="h-3 w-3" />
+                            {goal.branch_info.uncommitted_files} uncommitted
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Clean</span>
+                        )}
+                      </div>
+                    </div>
+                    {goal.branch_info.last_commit && (
+                      <div className="mt-3 pt-3 border-t text-xs text-muted-foreground">
+                        <div className="flex items-center gap-2">
+                          <GitCommit className="h-3 w-3" />
+                          <code>{goal.branch_info.last_commit.slice(0, 7)}</code>
+                          <span className="truncate">{goal.branch_info.last_commit_message}</span>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               {goal.overview && (
                 <div className="mb-4">
                   <h4 className="font-medium mb-2">Description</h4>
