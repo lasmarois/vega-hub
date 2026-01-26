@@ -105,7 +105,7 @@ export interface UserMessage {
 // Returned by GET /api/goals/:id/chat
 export interface ChatMessage {
   id: string
-  type: 'session_start' | 'session_stop' | 'question' | 'answer' | 'user_message' | 'activity'
+  type: 'session_start' | 'session_stop' | 'question' | 'answer' | 'user_message' | 'user_message_delivered' | 'activity'
   timestamp: string
   session_id: string
   goal_id: string

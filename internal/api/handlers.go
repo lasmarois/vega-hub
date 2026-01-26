@@ -1108,6 +1108,14 @@ func handleGoalChat(h *hub.Hub, goalID string) http.HandlerFunc {
 				} else {
 					msg.Content = "Executor stopped"
 				}
+				// Extract output from Data if present
+				if entry.Data != nil {
+					if dataMap, ok := entry.Data.(map[string]interface{}); ok {
+						if output, ok := dataMap["output"].(string); ok && output != "" {
+							msg.Data = map[string]interface{}{"output": output}
+						}
+					}
+				}
 			case "question":
 				msg.Content = entry.Question
 				msg.Answer = entry.Answer

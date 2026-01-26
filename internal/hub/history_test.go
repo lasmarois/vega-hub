@@ -59,7 +59,7 @@ func TestSessionHistory_RecordSessionStop(t *testing.T) {
 	}
 
 	// Stop the session with Claude info
-	err = h.RecordSessionStop("goal-123", "session-abc", "claude-xyz", "/path/to/transcript.jsonl", "completed")
+	err = h.RecordSessionStop("goal-123", "session-abc", "claude-xyz", "/path/to/transcript.jsonl", "completed", "")
 	if err != nil {
 		t.Fatalf("RecordSessionStop failed: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestSessionHistory_LoadFromFile(t *testing.T) {
 	// Create history with first instance
 	h1 := NewSessionHistory(dir)
 	h1.RecordSessionStart("goal-123", "session-abc", "/path/to/worktree", "testuser")
-	h1.RecordSessionStop("goal-123", "session-abc", "claude-xyz", "/transcript.jsonl", "completed")
+	h1.RecordSessionStop("goal-123", "session-abc", "claude-xyz", "/transcript.jsonl", "completed", "")
 
 	// Create new instance (simulates restart) and load from file
 	h2 := NewSessionHistory(dir)

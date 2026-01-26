@@ -133,7 +133,7 @@ func (h *SessionHistory) RecordSessionStart(goalID, sessionID, cwd, user string)
 }
 
 // RecordSessionStop records a session stopping
-func (h *SessionHistory) RecordSessionStop(goalID, sessionID, claudeSessionID, transcriptPath, reason string) error {
+func (h *SessionHistory) RecordSessionStop(goalID, sessionID, claudeSessionID, transcriptPath, reason, output string) error {
 	now := time.Now()
 	entry := HistoryEntry{
 		Timestamp:       now,
@@ -143,6 +143,12 @@ func (h *SessionHistory) RecordSessionStop(goalID, sessionID, claudeSessionID, t
 		TranscriptPath:  transcriptPath,
 		Type:            "session_stop",
 		StopReason:      reason,
+	}
+	// Store output in Data field if present
+	if output != "" {
+		entry.Data = map[string]interface{}{
+			"output": output,
+		}
 	}
 
 	// Update in-memory cache

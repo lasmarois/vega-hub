@@ -191,8 +191,8 @@ func (h *Hub) StopExecutorWithClaudeInfo(req StopExecutorRequest) {
 		outputSummary = h.readLastLines(executor.LogFile, 50)
 	}
 
-	// Record in persistent history (with Claude session info)
-	if err := h.history.RecordSessionStop(req.GoalID, req.SessionID, req.ClaudeSessionID, req.TranscriptPath, req.Reason); err != nil {
+	// Record in persistent history (with Claude session info and output)
+	if err := h.history.RecordSessionStop(req.GoalID, req.SessionID, req.ClaudeSessionID, req.TranscriptPath, req.Reason, outputSummary); err != nil {
 		// Log error but don't fail
 	}
 

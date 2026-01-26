@@ -5,11 +5,12 @@ export interface SSEHandlers {
   onQuestion?: () => void
   onAnswered?: (data: { id: string }) => void
   onExecutorStarted?: (data: { goal_id: string; session_id: string }) => void
-  onExecutorStopped?: (data: { goal_id: string; session_id: string; output?: string }) => void
+  onExecutorStopped?: (data: { goal_id: string; session_id: string; reason?: string; output?: string }) => void
   onGoalUpdated?: (data: { goal_id: string }) => void
   onRegistryUpdated?: () => void
   onGoalIced?: (data: { goal_id: string }) => void
   onGoalCompleted?: (data: { goal_id: string }) => void
+  onUserMessage?: (data: { goal_id: string; content: string; user: string }) => void
 }
 
 const RECONNECT_DELAY = 3000 // 3 seconds
@@ -84,6 +85,11 @@ export function useSSE(handlers: SSEHandlers) {
     eventSource.addEventListener('goal_completed', (e) => {
       const data = JSON.parse(e.data)
       handlersRef.current.onGoalCompleted?.(data)
+    })
+
+    eventSource.addEventListener('user_message', (e) => {
+      const data = JSON.parse(e.data)
+      handlersRef.current.onUserMessage?.(data)
     })
 
     eventSource.onerror = () => {

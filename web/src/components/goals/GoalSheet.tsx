@@ -20,10 +20,11 @@ import {
 } from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, AlertCircle, CheckCircle2, Circle, MessageSquare, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle } from 'lucide-react'
+import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { GoalDetail, GoalStatus, Question } from '@/lib/types'
+import type { GoalDetail, GoalStatus } from '@/lib/types'
 import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog } from './GoalActions'
+import { ChatThread } from './ChatThread'
 
 interface GoalSheetProps {
   open: boolean
@@ -35,7 +36,6 @@ interface GoalSheetProps {
 
 export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: GoalSheetProps) {
   const { isDesktop } = useMobile()
-  const [answerText, setAnswerText] = useState<Record<string, string>>({})
   const [spawning, setSpawning] = useState(false)
   const [showSpawnInput, setShowSpawnInput] = useState(false)
   const [spawnContext, setSpawnContext] = useState('')
@@ -47,8 +47,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
   const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false)
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false)
 
-  const handleAnswer = async (questionId: string) => {
-    const answer = answerText[questionId]
+  const handleAnswer = async (questionId: string, answer: string) => {
     if (!answer?.trim()) return
 
     try {
@@ -59,11 +58,6 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
       })
 
       if (res.ok) {
-        setAnswerText((prev) => {
-          const next = { ...prev }
-          delete next[questionId]
-          return next
-        })
         onRefresh()
       }
     } catch (err) {
@@ -351,7 +345,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
               value="qa"
               className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2 relative"
             >
-              Q&A
+              Chat
               {goal.pending_questions && goal.pending_questions.length > 0 && (
                 <Badge variant="destructive" className="ml-1.5 h-5 px-1.5">
                   {goal.pending_questions.length}
@@ -459,30 +453,12 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
               )}
             </TabsContent>
 
-            <TabsContent value="qa" className="p-4 m-0">
-              {goal.pending_questions?.length > 0 ? (
-                <div className="space-y-4">
-                  <h4 className="font-medium flex items-center gap-2 text-destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    Pending Questions
-                  </h4>
-                  {goal.pending_questions.map((q) => (
-                    <QuestionCard
-                      key={q.id}
-                      question={q}
-                      answerText={answerText[q.id] || ''}
-                      onAnswerChange={(text) => setAnswerText((prev) => ({ ...prev, [q.id]: text }))}
-                      onSubmit={() => handleAnswer(q.id)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-center text-muted-foreground">
-                  <MessageSquare className="h-12 w-12 mb-4 opacity-50" />
-                  <p>No pending questions</p>
-                  <p className="text-sm">Questions from executors will appear here</p>
-                </div>
-              )}
+            <TabsContent value="qa" className="p-4 m-0 h-[calc(100vh-300px)]">
+              <ChatThread
+                goalId={goal.id}
+                pendingQuestions={goal.pending_questions || []}
+                onAnswerSubmit={handleAnswer}
+              />
             </TabsContent>
 
             <TabsContent value="planning" className="p-4 m-0">
@@ -651,65 +627,5 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
         onSuccess={onRefresh}
       />
     </Sheet>
-  )
-}
-
-function QuestionCard({
-  question,
-  answerText,
-  onAnswerChange,
-  onSubmit,
-}: {
-  question: Question
-  answerText: string
-  onAnswerChange: (text: string) => void
-  onSubmit: () => void
-}) {
-  return (
-    <Card className="border-destructive/50 bg-destructive/5">
-      <CardContent className="p-4">
-        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
-          <span>Session: {question.session_id.slice(0, 8)}...</span>
-          <span>{new Date(question.created_at).toLocaleTimeString()}</span>
-        </div>
-        <p className="mb-4">{question.question}</p>
-
-        {question.options && question.options.length > 0 && (
-          <div className="space-y-2 mb-4">
-            {question.options.map((opt, i) => (
-              <Button
-                key={i}
-                variant={answerText === opt.label ? 'default' : 'outline'}
-                className="w-full justify-start h-auto py-2 px-3"
-                onClick={() => onAnswerChange(opt.label)}
-              >
-                <div className="text-left">
-                  <span className="font-medium">{opt.label}</span>
-                  {opt.description && (
-                    <span className="text-muted-foreground ml-2 text-xs">
-                      - {opt.description}
-                    </span>
-                  )}
-                </div>
-              </Button>
-            ))}
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <Input
-            value={answerText}
-            onChange={(e) => onAnswerChange(e.target.value)}
-            placeholder="Type your answer..."
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') onSubmit()
-            }}
-          />
-          <Button onClick={onSubmit} disabled={!answerText.trim()}>
-            Answer
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
   )
 }
