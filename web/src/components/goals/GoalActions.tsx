@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -1075,11 +1075,16 @@ export function DeleteGoalDialog({
     }
   }
 
+  // Run preflight check when dialog opens
+  useEffect(() => {
+    if (open) {
+      runPreflightCheck()
+    }
+  }, [open])
+
   // Handle dialog open/close
   const handleOpenChange = (newOpen: boolean) => {
-    if (newOpen) {
-      runPreflightCheck()
-    } else {
+    if (!newOpen) {
       // Reset state when closing
       setState('loading')
       setDeleteBranch(true)
