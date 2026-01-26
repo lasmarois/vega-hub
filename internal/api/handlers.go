@@ -2185,8 +2185,17 @@ func handleCreateWorktree(h *hub.Hub, p *goals.Parser, goalID string) http.Handl
 			}
 			return -1
 		}, slug)
+		// Trim leading/trailing hyphens and collapse multiple hyphens
+		slug = strings.Trim(slug, "-")
+		for strings.Contains(slug, "--") {
+			slug = strings.ReplaceAll(slug, "--", "-")
+		}
 		if len(slug) > 40 {
 			slug = slug[:40]
+		}
+		// Fallback if slug is empty
+		if slug == "" {
+			slug = "work"
 		}
 		branchName := fmt.Sprintf("goal-%s-%s", goalID, slug)
 		worktreePath := filepath.Join(p.Dir(), "workspaces", project, branchName)

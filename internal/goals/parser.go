@@ -269,7 +269,7 @@ func (p *Parser) ParseGoalDetail(id string) (*GoalDetail, error) {
 	phaseNum := 0
 
 	// Regex patterns
-	titleRe := regexp.MustCompile(`^# Goal #([0-9a-f]+): (.+)$`)
+	titleRe := regexp.MustCompile(`^# Goal #?([0-9a-f]+): (.+)$`)
 	phaseRe := regexp.MustCompile(`^### Phase (\d+): (.+)$`)
 	taskRe := regexp.MustCompile(`^- \[([ x])\] (.+)$`)
 
