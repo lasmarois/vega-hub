@@ -425,6 +425,9 @@ type GoalDetailResponse struct {
 	WorkspaceStatus  string          `json:"workspace_status,omitempty"` // "ready", "missing", "error"
 	WorkspaceError   string          `json:"workspace_error,omitempty"`  // Error message if not ready
 	BranchInfo       *BranchInfo     `json:"branch_info,omitempty"`      // Git branch info for worktree
+	WorktreeStatus   string          `json:"worktree_status,omitempty"`  // "exists", "missing", "never_created"
+	BranchStatus     string          `json:"branch_status,omitempty"`    // "local", "remote_only", "missing"
+	CanRecreate      bool            `json:"can_recreate,omitempty"`     // true if branch exists somewhere
 }
 
 // SpawnRequest is the request body for POST /api/goals/:id/spawn
@@ -508,6 +511,8 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			}
 		case "create-mr":
 			handleCreateMR(h, p, id)(w, r)
+		case "recreate-worktree":
+			handleRecreateWorktree(h, p, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -579,6 +584,29 @@ func handleGoalDetail(h *hub.Hub, p *goals.Parser, id string) http.HandlerFunc {
 		// Get branch info for active goals with worktrees
 		if detail.Status == "active" && len(detail.Projects) > 0 {
 			response.BranchInfo = getBranchInfo(p.Dir(), id, detail.Projects)
+		}
+
+		// Compute worktree status and branch status
+		if detail.Worktree != nil && detail.Worktree.Branch != "" {
+			// Goal has worktree metadata
+			worktreePath := filepath.Join(p.Dir(), detail.Worktree.Path)
+			if _, statErr := os.Stat(worktreePath); statErr == nil {
+				// Worktree directory exists
+				response.WorktreeStatus = "exists"
+			} else {
+				// Worktree metadata exists but directory is missing
+				response.WorktreeStatus = "missing"
+
+				// Check if branch exists (local or remote)
+				if len(detail.Projects) > 0 {
+					projectBase := filepath.Join(p.Dir(), "workspaces", detail.Projects[0], "worktree-base")
+					response.BranchStatus = checkBranchExists(projectBase, detail.Worktree.Branch)
+					response.CanRecreate = response.BranchStatus == "local" || response.BranchStatus == "remote_only"
+				}
+			}
+		} else {
+			// No worktree metadata - never created or legacy goal
+			response.WorktreeStatus = "never_created"
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1894,4 +1922,233 @@ func getLastCommit(repoPath string) (string, string) {
 		return parts[0], parts[1]
 	}
 	return "", ""
+}
+
+// checkBranchExists checks if a branch exists locally, remotely, or is missing
+// Returns: "local", "remote_only", "missing"
+func checkBranchExists(repoPath, branchName string) string {
+	// Check local branch
+	cmd := exec.Command("git", "-C", repoPath, "branch", "--list", branchName)
+	output, err := cmd.Output()
+	if err == nil && strings.TrimSpace(string(output)) != "" {
+		return "local"
+	}
+
+	// Check remote branch
+	cmd = exec.Command("git", "-C", repoPath, "ls-remote", "--heads", "origin", branchName)
+	output, err = cmd.Output()
+	if err == nil && strings.TrimSpace(string(output)) != "" {
+		return "remote_only"
+	}
+
+	return "missing"
+}
+
+// RecreateWorktreeRequest is the request body for POST /api/goals/:id/recreate-worktree
+type RecreateWorktreeRequest struct {
+	Project string `json:"project,omitempty"` // Optional, defaults to goal's first project
+}
+
+// RecreateWorktreeResponse is the response for POST /api/goals/:id/recreate-worktree
+type RecreateWorktreeResponse struct {
+	Success      bool   `json:"success"`
+	WorktreePath string `json:"worktree_path,omitempty"`
+	Branch       string `json:"branch,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+// handleRecreateWorktree handles POST /api/goals/:id/recreate-worktree
+// Recreates a worktree from an existing branch stored in goal metadata
+func handleRecreateWorktree(h *hub.Hub, p *goals.Parser, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		log.Printf("[RECREATE-WORKTREE] Received request for goal %s from %s", goalID, r.RemoteAddr)
+
+		// Parse request body (optional)
+		var req RecreateWorktreeRequest
+		if r.Body != nil && r.ContentLength > 0 {
+			json.NewDecoder(r.Body).Decode(&req)
+		}
+
+		// Get goal detail
+		detail, err := p.ParseGoalDetail(goalID)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   "Goal not found: " + err.Error(),
+			})
+			return
+		}
+
+		// Check if goal has worktree metadata
+		if detail.Worktree == nil || detail.Worktree.Branch == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   "Goal has no worktree metadata. Cannot recreate.",
+			})
+			return
+		}
+
+		// Determine project
+		project := req.Project
+		if project == "" && len(detail.Projects) > 0 {
+			project = detail.Projects[0]
+		}
+		if project == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   "No project specified and goal has no projects",
+			})
+			return
+		}
+
+		// Get paths
+		projectBase := filepath.Join(p.Dir(), "workspaces", project, "worktree-base")
+		worktreePath := filepath.Join(p.Dir(), detail.Worktree.Path)
+		branchName := detail.Worktree.Branch
+
+		// Verify projectBase exists
+		if _, err := os.Stat(projectBase); os.IsNotExist(err) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   "Project workspace not found: " + project,
+			})
+			return
+		}
+
+		// Check if worktree already exists
+		if _, err := os.Stat(worktreePath); err == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   "Worktree already exists at: " + worktreePath,
+			})
+			return
+		}
+
+		// Check if branch exists
+		branchStatus := checkBranchExists(projectBase, branchName)
+		if branchStatus == "missing" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   fmt.Sprintf("Branch '%s' not found locally or on remote", branchName),
+			})
+			return
+		}
+
+		// Recreate worktree
+		// If branch is remote_only, we need to fetch and create local tracking branch
+		if branchStatus == "remote_only" {
+			// Fetch the branch from remote
+			fetchCmd := exec.Command("git", "-C", projectBase, "fetch", "origin", branchName+":"+branchName)
+			if output, err := fetchCmd.CombinedOutput(); err != nil {
+				log.Printf("[RECREATE-WORKTREE] Fetch failed: %s", string(output))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+					Success: false,
+					Error:   fmt.Sprintf("Failed to fetch branch from remote: %s", strings.TrimSpace(string(output))),
+				})
+				return
+			}
+		}
+
+		// Calculate relative path for git worktree add
+		relPath, err := filepath.Rel(projectBase, worktreePath)
+		if err != nil {
+			relPath = worktreePath
+		}
+
+		// Create worktree from existing branch
+		cmd := exec.Command("git", "-C", projectBase, "worktree", "add", relPath, branchName)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("[RECREATE-WORKTREE] Failed: %s", string(output))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   fmt.Sprintf("Failed to create worktree: %s", strings.TrimSpace(string(output))),
+			})
+			return
+		}
+
+		// Copy hooks to the new worktree
+		copyHooksToWorktree(p.Dir(), worktreePath)
+
+		log.Printf("[RECREATE-WORKTREE] Successfully recreated worktree for goal %s at %s", goalID, worktreePath)
+
+		// Emit SSE event
+		h.EmitEvent("worktree_recreated", map[string]interface{}{
+			"goal_id":       goalID,
+			"worktree_path": worktreePath,
+			"branch":        branchName,
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+			Success:      true,
+			WorktreePath: worktreePath,
+			Branch:       branchName,
+		})
+	}
+}
+
+// copyHooksToWorktree copies vega-missile hooks to a worktree
+func copyHooksToWorktree(vegaDir, worktreePath string) {
+	// Copy hooks from template
+	templateHooks := filepath.Join(vegaDir, "templates", "project-init", ".claude", "hooks")
+	destHooks := filepath.Join(worktreePath, ".claude", "hooks")
+
+	os.MkdirAll(destHooks, 0755)
+
+	// Copy each hook file
+	files, _ := os.ReadDir(templateHooks)
+	for _, f := range files {
+		src := filepath.Join(templateHooks, f.Name())
+		dst := filepath.Join(destHooks, f.Name())
+		if content, err := os.ReadFile(src); err == nil {
+			os.WriteFile(dst, content, 0755)
+		}
+	}
+
+	// Also copy rules
+	templateRules := filepath.Join(vegaDir, "templates", "project-init", ".claude", "rules")
+	destRules := filepath.Join(worktreePath, ".claude", "rules")
+	os.MkdirAll(destRules, 0755)
+
+	// Recursively copy rules
+	filepath.Walk(templateRules, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(templateRules, path)
+		dst := filepath.Join(destRules, rel)
+		os.MkdirAll(filepath.Dir(dst), 0755)
+		if content, err := os.ReadFile(path); err == nil {
+			os.WriteFile(dst, content, 0644)
+		}
+		return nil
+	})
+
+	// Copy settings.local.json
+	templateSettings := filepath.Join(vegaDir, "templates", "project-init", ".claude", "settings.local.json")
+	destSettings := filepath.Join(worktreePath, ".claude", "settings.local.json")
+	if content, err := os.ReadFile(templateSettings); err == nil {
+		os.WriteFile(destSettings, content, 0644)
+	}
 }
