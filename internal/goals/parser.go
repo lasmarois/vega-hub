@@ -205,6 +205,15 @@ func parseProjects(s string) []string {
 	return result
 }
 
+// WorktreeInfo contains worktree metadata stored in goal file
+type WorktreeInfo struct {
+	Branch     string `json:"branch"`
+	Project    string `json:"project"`
+	Path       string `json:"path"`
+	BaseBranch string `json:"base_branch"`
+	Created    string `json:"created"`
+}
+
 // GoalDetail contains detailed information about a specific goal
 type GoalDetail struct {
 	Goal
@@ -212,6 +221,7 @@ type GoalDetail struct {
 	Phases     []PhaseDetail `json:"phases,omitempty"`
 	Acceptance []string      `json:"acceptance,omitempty"`
 	Notes      []string      `json:"notes,omitempty"`
+	Worktree   *WorktreeInfo `json:"worktree,omitempty"`
 }
 
 // PhaseDetail describes a phase within a goal
@@ -295,6 +305,9 @@ func (p *Parser) ParseGoalDetail(id string) (*GoalDetail, error) {
 		} else if strings.HasPrefix(line, "## Project") {
 			section = "project"
 			continue
+		} else if strings.HasPrefix(line, "## Worktree") {
+			section = "worktree"
+			continue
 		} else if strings.HasPrefix(line, "## ") {
 			section = ""
 			continue
@@ -359,6 +372,31 @@ func (p *Parser) ParseGoalDetail(id string) (*GoalDetail, error) {
 			re := regexp.MustCompile(`^\- \*\*([^*]+)\*\*`)
 			if matches := re.FindStringSubmatch(line); matches != nil {
 				detail.Projects = append(detail.Projects, matches[1])
+			}
+		}
+
+		// Parse worktree metadata
+		if section == "worktree" && strings.HasPrefix(line, "- **") {
+			if detail.Worktree == nil {
+				detail.Worktree = &WorktreeInfo{}
+			}
+			// Parse: - **Key**: value
+			re := regexp.MustCompile(`^\- \*\*([^*]+)\*\*:\s*(.+)$`)
+			if matches := re.FindStringSubmatch(line); matches != nil {
+				key := strings.ToLower(matches[1])
+				value := strings.TrimSpace(matches[2])
+				switch key {
+				case "branch":
+					detail.Worktree.Branch = value
+				case "project":
+					detail.Worktree.Project = value
+				case "path":
+					detail.Worktree.Path = value
+				case "base branch":
+					detail.Worktree.BaseBranch = value
+				case "created":
+					detail.Worktree.Created = value
+				}
 			}
 		}
 	}
