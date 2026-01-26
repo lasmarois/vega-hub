@@ -1726,12 +1726,45 @@ func handleGetCredentials(p *goals.Parser, project string) http.HandlerFunc {
 }
 
 // getBranchInfo returns git branch information for a goal's worktree
+// It first tries to read from goal metadata (stored in goal markdown file),
+// then falls back to filesystem scan if metadata is missing.
 func getBranchInfo(vegaDir, goalID string, projects []string) *BranchInfo {
 	if len(projects) == 0 {
 		return nil
 	}
 
-	// Find worktree for this goal
+	// First, try to get branch info from goal metadata (primary source)
+	parser := goals.NewParser(vegaDir)
+	if detail, err := parser.ParseGoalDetail(goalID); err == nil && detail.Worktree != nil {
+		wt := detail.Worktree
+		worktreePath := filepath.Join(vegaDir, wt.Path)
+
+		// Check if the worktree actually exists on disk for live data
+		if _, statErr := os.Stat(worktreePath); statErr == nil {
+			info := &BranchInfo{
+				Branch:       wt.Branch,
+				BaseBranch:   wt.BaseBranch,
+				WorktreePath: worktreePath,
+			}
+
+			// Get live git data from the worktree
+			info.Ahead, info.Behind = getAheadBehind(worktreePath, info.BaseBranch)
+			info.UncommittedFiles = countUncommittedFiles(worktreePath)
+			info.LastCommit, info.LastCommitMsg = getLastCommit(worktreePath)
+
+			return info
+		}
+
+		// Worktree directory doesn't exist but we have metadata - return metadata only
+		// This handles the case where worktree was deleted but metadata remains
+		return &BranchInfo{
+			Branch:       wt.Branch,
+			BaseBranch:   wt.BaseBranch,
+			WorktreePath: worktreePath,
+		}
+	}
+
+	// Fallback: Find worktree by filesystem scan (for legacy goals without metadata)
 	worktreePath, project := findWorktreeForGoal(vegaDir, goalID, projects)
 	if worktreePath == "" {
 		return nil
@@ -1748,9 +1781,17 @@ func getBranchInfo(vegaDir, goalID string, projects []string) *BranchInfo {
 	projectConfigPath := filepath.Join(vegaDir, "projects", project+".md")
 	if content, err := os.ReadFile(projectConfigPath); err == nil {
 		for _, line := range strings.Split(string(content), "\n") {
-			if strings.HasPrefix(line, "Base Branch:") {
-				info.BaseBranch = strings.TrimSpace(strings.TrimPrefix(line, "Base Branch:"))
-				break
+			// Handle markdown formats: "Base Branch:", "**Base Branch**:", etc.
+			if strings.Contains(strings.ToLower(line), "base branch") {
+				// Extract value after colon, strip markdown (**, `, etc.)
+				if idx := strings.Index(line, ":"); idx != -1 {
+					value := strings.TrimSpace(line[idx+1:])
+					value = strings.Trim(value, "*`")
+					if value != "" {
+						info.BaseBranch = value
+						break
+					}
+				}
 			}
 		}
 	}
