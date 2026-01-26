@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lasmarois/vega-hub/internal/credentials"
 	"github.com/lasmarois/vega-hub/internal/goals"
 	"github.com/lasmarois/vega-hub/internal/hub"
 	"github.com/lasmarois/vega-hub/internal/operations"
@@ -29,6 +30,9 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, p *goals.Parser) {
 	mux.HandleFunc("/api/projects", corsMiddleware(handleProjects(h)))
 	// Session history routes
 	mux.HandleFunc("/api/history/", corsMiddleware(handleHistoryRoutes(h)))
+	// User identity and credentials routes
+	mux.HandleFunc("/api/user", corsMiddleware(handleGetUser()))
+	mux.HandleFunc("/api/user/", corsMiddleware(handleUserRoutes(p)))
 }
 
 // AskRequest is the request body for POST /api/ask
@@ -1336,5 +1340,118 @@ func handleGetPendingMessages(h *hub.Hub, goalID string) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// handleGetUser handles GET /api/user - returns current OS user info
+func handleGetUser() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		user, err := credentials.GetCurrentUser()
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{
+					"code":    "user_detection_failed",
+					"message": err.Error(),
+				},
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(user)
+	}
+}
+
+// handleUserRoutes handles /api/user/* routes
+func handleUserRoutes(p *goals.Parser) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Parse path: /api/user/credentials/:project
+		path := strings.TrimPrefix(r.URL.Path, "/api/user/")
+		parts := strings.Split(path, "/")
+
+		if len(parts) < 2 || parts[0] != "credentials" {
+			http.Error(w, "Not found", http.StatusNotFound)
+			return
+		}
+
+		project := parts[1]
+		handleGetCredentials(p, project)(w, r)
+	}
+}
+
+// handleGetCredentials handles GET /api/user/credentials/:project
+func handleGetCredentials(p *goals.Parser, project string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Get current user
+		user, err := credentials.GetCurrentUser()
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{
+					"code":    "user_detection_failed",
+					"message": err.Error(),
+				},
+			})
+			return
+		}
+
+		// Parse project to get git remote
+		proj, err := p.ParseProject(project)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{
+					"code":    "project_not_found",
+					"message": fmt.Sprintf("Project '%s' not found: %v", project, err),
+				},
+			})
+			return
+		}
+
+		if proj.GitRemote == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{
+					"code":    "no_git_remote",
+					"message": fmt.Sprintf("Project '%s' has no git remote configured", project),
+				},
+			})
+			return
+		}
+
+		// Parse git service from remote URL
+		service, err := credentials.ParseGitService(proj.GitRemote)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{
+					"code":    "invalid_git_remote",
+					"message": err.Error(),
+				},
+			})
+			return
+		}
+
+		// Validate credentials
+		result := credentials.ValidateCredentials(user, service)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
 	}
 }
