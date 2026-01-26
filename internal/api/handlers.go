@@ -434,6 +434,23 @@ type SpawnRequest struct {
 	Mode    string `json:"mode,omitempty"` // Executor mode: plan, implement, review, test, security, quick
 }
 
+// CreateMRRequest is the request body for POST /api/goals/:id/create-mr
+type CreateMRRequest struct {
+	Title        string `json:"title"`
+	Description  string `json:"description,omitempty"`
+	TargetBranch string `json:"target_branch,omitempty"` // Defaults to base branch
+	Draft        bool   `json:"draft,omitempty"`
+}
+
+// CreateMRResponse is the response for POST /api/goals/:id/create-mr
+type CreateMRResponse struct {
+	Success  bool   `json:"success"`
+	MRURL    string `json:"mr_url,omitempty"`
+	MRNumber int    `json:"mr_number,omitempty"`
+	Service  string `json:"service,omitempty"` // "github" or "gitlab"
+	Error    string `json:"error,omitempty"`
+}
+
 // handleGoalRoutes routes /api/goals/:id/* requests
 func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -489,6 +506,8 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			} else {
 				handleGoalMessages(h, id)(w, r)
 			}
+		case "create-mr":
+			handleCreateMR(h, p, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -945,6 +964,235 @@ func handleGoalResume(h *hub.Hub, goalID string) http.HandlerFunc {
 			"data":    data,
 		})
 	}
+}
+
+// handleCreateMR handles POST /api/goals/:id/create-mr - creates a merge request
+func handleCreateMR(h *hub.Hub, p *goals.Parser, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		log.Printf("[CREATE-MR] Received request for goal %s from %s", goalID, r.RemoteAddr)
+
+		var req CreateMRRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(CreateMRResponse{
+				Success: false,
+				Error:   "Invalid JSON: " + err.Error(),
+			})
+			return
+		}
+
+		if req.Title == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(CreateMRResponse{
+				Success: false,
+				Error:   "Title is required",
+			})
+			return
+		}
+
+		// Get goal detail to find project
+		detail, err := p.ParseGoalDetail(goalID)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(CreateMRResponse{
+				Success: false,
+				Error:   "Goal not found: " + err.Error(),
+			})
+			return
+		}
+
+		if len(detail.Projects) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(CreateMRResponse{
+				Success: false,
+				Error:   "Goal has no associated projects",
+			})
+			return
+		}
+
+		// Find worktree for this goal
+		project := detail.Projects[0]
+		worktreePath, _ := findWorktreeForGoal(p.Dir(), goalID, detail.Projects)
+		if worktreePath == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(CreateMRResponse{
+				Success: false,
+				Error:   "No worktree found for this goal",
+			})
+			return
+		}
+
+		// Get project config to determine git service
+		proj, err := p.ParseProject(project)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(CreateMRResponse{
+				Success: false,
+				Error:   "Project config not found: " + err.Error(),
+			})
+			return
+		}
+
+		// Determine target branch
+		targetBranch := req.TargetBranch
+		if targetBranch == "" {
+			targetBranch = proj.BaseBranch
+			if targetBranch == "" {
+				targetBranch = "main"
+			}
+		}
+
+		// Detect git service from remote URL
+		service := detectGitService(proj.GitRemote)
+		log.Printf("[CREATE-MR] Detected service: %s for remote: %s", service, proj.GitRemote)
+
+		// Create MR/PR
+		var mrURL string
+		var mrNumber int
+
+		switch service {
+		case "github":
+			mrURL, mrNumber, err = createGitHubPR(worktreePath, req.Title, req.Description, targetBranch, req.Draft)
+		case "gitlab":
+			mrURL, mrNumber, err = createGitLabMR(worktreePath, req.Title, req.Description, targetBranch, req.Draft)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(CreateMRResponse{
+				Success: false,
+				Error:   "Unknown git service. Remote URL must contain github.com or gitlab",
+			})
+			return
+		}
+
+		if err != nil {
+			log.Printf("[CREATE-MR] Failed to create MR: %v", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(CreateMRResponse{
+				Success: false,
+				Service: service,
+				Error:   err.Error(),
+			})
+			return
+		}
+
+		log.Printf("[CREATE-MR] Created %s MR #%d: %s", service, mrNumber, mrURL)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(CreateMRResponse{
+			Success:  true,
+			MRURL:    mrURL,
+			MRNumber: mrNumber,
+			Service:  service,
+		})
+	}
+}
+
+// detectGitService determines if a remote URL is GitHub or GitLab
+func detectGitService(remoteURL string) string {
+	lower := strings.ToLower(remoteURL)
+	if strings.Contains(lower, "github.com") {
+		return "github"
+	}
+	if strings.Contains(lower, "gitlab") {
+		return "gitlab"
+	}
+	return "unknown"
+}
+
+// createGitHubPR creates a pull request using gh CLI
+func createGitHubPR(repoPath, title, description, targetBranch string, draft bool) (string, int, error) {
+	args := []string{"pr", "create", "--title", title, "--base", targetBranch}
+
+	if description != "" {
+		args = append(args, "--body", description)
+	} else {
+		args = append(args, "--body", "")
+	}
+
+	if draft {
+		args = append(args, "--draft")
+	}
+
+	cmd := exec.Command("gh", args...)
+	cmd.Dir = repoPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", 0, fmt.Errorf("gh pr create failed: %s", strings.TrimSpace(string(output)))
+	}
+
+	// Parse URL from output (last line is the PR URL)
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	prURL := lines[len(lines)-1]
+
+	// Extract PR number from URL (e.g., https://github.com/user/repo/pull/123)
+	prNumber := 0
+	if idx := strings.LastIndex(prURL, "/"); idx != -1 {
+		fmt.Sscanf(prURL[idx+1:], "%d", &prNumber)
+	}
+
+	return prURL, prNumber, nil
+}
+
+// createGitLabMR creates a merge request using glab CLI
+func createGitLabMR(repoPath, title, description, targetBranch string, draft bool) (string, int, error) {
+	args := []string{"mr", "create", "--title", title, "--target-branch", targetBranch, "--yes"}
+
+	if description != "" {
+		args = append(args, "--description", description)
+	}
+
+	if draft {
+		args = append(args, "--draft")
+	}
+
+	cmd := exec.Command("glab", args...)
+	cmd.Dir = repoPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", 0, fmt.Errorf("glab mr create failed: %s", strings.TrimSpace(string(output)))
+	}
+
+	// Parse MR URL and number from output
+	// glab outputs: "Creating merge request for branch into main in user/repo\n!123 https://gitlab.com/..."
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+
+	mrURL := ""
+	mrNumber := 0
+
+	for _, line := range lines {
+		// Look for URL
+		if strings.Contains(line, "https://") {
+			parts := strings.Fields(line)
+			for _, part := range parts {
+				if strings.HasPrefix(part, "https://") {
+					mrURL = part
+				}
+				if strings.HasPrefix(part, "!") {
+					fmt.Sscanf(part[1:], "%d", &mrNumber)
+				}
+			}
+		}
+	}
+
+	if mrURL == "" {
+		// If we can't parse, return the full output
+		return strings.TrimSpace(string(output)), mrNumber, nil
+	}
+
+	return mrURL, mrNumber, nil
 }
 
 // ProjectSummary is a simplified project info for the API
