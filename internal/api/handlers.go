@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -300,6 +301,31 @@ type ResumeGoalRequest struct {
 	Project string `json:"project"`
 }
 
+// DeleteGoalRequest is the request body for POST /api/goals/:id/delete
+type DeleteGoalRequest struct {
+	Force        bool `json:"force"`         // Skip uncommitted/unpushed warnings
+	DeleteBranch bool `json:"delete_branch"` // Also delete git branch after worktree removal
+}
+
+// DeleteWarning represents a warning during pre-flight checks
+type DeleteWarning struct {
+	Level   string   `json:"level"`             // "error", "warning", "info"
+	Message string   `json:"message"`
+	Details []string `json:"details,omitempty"` // Additional details (e.g., file names)
+}
+
+// DeleteGoalResponse is the response for POST /api/goals/:id/delete
+type DeleteGoalResponse struct {
+	Success       bool            `json:"success"`
+	CanDelete     bool            `json:"can_delete,omitempty"`      // False if blocked by warnings
+	RequireForce  bool            `json:"require_force,omitempty"`   // True if force=true needed to proceed
+	Warnings      []DeleteWarning `json:"warnings,omitempty"`        // Pre-flight check warnings
+	WorktreeRemoved bool          `json:"worktree_removed,omitempty"`
+	BranchDeleted   bool          `json:"branch_deleted,omitempty"`
+	GoalDeleted     bool          `json:"goal_deleted,omitempty"`
+	Error           string        `json:"error,omitempty"`
+}
+
 // handleGoalsRoot handles /api/goals - GET lists goals, POST creates a goal
 func handleGoalsRoot(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -515,6 +541,8 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleRecreateWorktree(h, p, id)(w, r)
 		case "create-worktree":
 			handleCreateWorktree(h, p, id)(w, r)
+		case "delete":
+			handleDeleteGoal(h, p, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -994,6 +1022,270 @@ func handleGoalResume(h *hub.Hub, goalID string) http.HandlerFunc {
 			"data":    data,
 		})
 	}
+}
+
+// handleDeleteGoal handles POST /api/goals/:id/delete - permanently deletes a goal
+func handleDeleteGoal(h *hub.Hub, p *goals.Parser, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		log.Printf("[DELETE] Received delete request for goal %s from %s", goalID, r.RemoteAddr)
+
+		var req DeleteGoalRequest
+		if r.Body != nil && r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
+		}
+
+		// Get goal detail to find project and worktree info
+		detail, err := p.ParseGoalDetail(goalID)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(DeleteGoalResponse{
+				Success: false,
+				Error:   "Goal not found: " + err.Error(),
+			})
+			return
+		}
+
+		// Determine goal location (active, iced, or history)
+		goalFolder := "active"
+		goalFile := filepath.Join(p.Dir(), "goals", "active", goalID+".md")
+		if _, err := os.Stat(goalFile); os.IsNotExist(err) {
+			goalFile = filepath.Join(p.Dir(), "goals", "iced", goalID+".md")
+			goalFolder = "iced"
+			if _, err := os.Stat(goalFile); os.IsNotExist(err) {
+				goalFile = filepath.Join(p.Dir(), "goals", "history", goalID+".md")
+				goalFolder = "history"
+			}
+		}
+
+		// Determine worktree status and paths
+		var worktreePath string
+		var projectBase string
+		var branchName string
+		worktreeExists := false
+
+		if detail.Worktree != nil && detail.Worktree.Path != "" {
+			worktreePath = filepath.Join(p.Dir(), detail.Worktree.Path)
+			branchName = detail.Worktree.Branch
+			if len(detail.Projects) > 0 {
+				projectBase = filepath.Join(p.Dir(), "workspaces", detail.Projects[0], "worktree-base")
+			}
+			if _, statErr := os.Stat(worktreePath); statErr == nil {
+				worktreeExists = true
+			}
+		} else if len(detail.Projects) > 0 {
+			// Try to find worktree by filesystem scan (legacy goals)
+			worktreePath, _ = findWorktreeForGoal(p.Dir(), goalID, detail.Projects)
+			if worktreePath != "" {
+				worktreeExists = true
+				projectBase = filepath.Join(p.Dir(), "workspaces", detail.Projects[0], "worktree-base")
+				branchName = getCurrentBranch(worktreePath)
+			}
+		}
+
+		// Pre-flight checks (if not force)
+		var warnings []DeleteWarning
+		if !req.Force && worktreeExists {
+			// Check for uncommitted changes
+			uncommittedFiles := getUncommittedFiles(worktreePath)
+			if len(uncommittedFiles) > 0 {
+				warnings = append(warnings, DeleteWarning{
+					Level:   "error",
+					Message: fmt.Sprintf("%d uncommitted files", len(uncommittedFiles)),
+					Details: uncommittedFiles,
+				})
+			}
+
+			// Check for unpushed commits
+			if projectBase != "" {
+				baseBranch := "main"
+				if detail.Worktree != nil && detail.Worktree.BaseBranch != "" {
+					baseBranch = detail.Worktree.BaseBranch
+				}
+				ahead, _ := getAheadBehind(worktreePath, baseBranch)
+				if ahead > 0 {
+					warnings = append(warnings, DeleteWarning{
+						Level:   "warning",
+						Message: fmt.Sprintf("%d commits not pushed to remote", ahead),
+					})
+				}
+			}
+		}
+
+		// If there are blocking warnings and force is not set, return them
+		if len(warnings) > 0 && !req.Force {
+			log.Printf("[DELETE] Goal %s blocked by %d warnings", goalID, len(warnings))
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(DeleteGoalResponse{
+				Success:      false,
+				CanDelete:    false,
+				RequireForce: true,
+				Warnings:     warnings,
+			})
+			return
+		}
+
+		response := DeleteGoalResponse{
+			Success: true,
+		}
+
+		// Step 1: Remove worktree if exists
+		if worktreeExists && projectBase != "" {
+			removeWorktreeForGoal(projectBase, worktreePath)
+			response.WorktreeRemoved = true
+			log.Printf("[DELETE] Removed worktree for goal %s", goalID)
+		}
+
+		// Step 2: Prune stale worktree refs
+		if projectBase != "" {
+			pruneCmd := exec.Command("git", "-C", projectBase, "worktree", "prune")
+			pruneCmd.Run() // Best-effort, ignore errors
+		}
+
+		// Step 3: Delete branch if requested
+		if req.DeleteBranch && branchName != "" && projectBase != "" {
+			if err := deleteBranchForce(projectBase, branchName); err == nil {
+				response.BranchDeleted = true
+				log.Printf("[DELETE] Deleted branch %s for goal %s", branchName, goalID)
+			} else {
+				log.Printf("[DELETE] Failed to delete branch %s: %v", branchName, err)
+			}
+		}
+
+		// Step 4: Delete goal file
+		if err := os.Remove(goalFile); err == nil {
+			response.GoalDeleted = true
+			log.Printf("[DELETE] Deleted goal file for goal %s", goalID)
+		} else {
+			log.Printf("[DELETE] Failed to delete goal file: %v", err)
+		}
+
+		// Step 5: Update REGISTRY.md
+		registryPath := filepath.Join(p.Dir(), "goals", "REGISTRY.md")
+		if err := removeGoalFromRegistry(registryPath, goalID, goalFolder); err != nil {
+			log.Printf("[DELETE] Failed to update registry: %v", err)
+		}
+
+		// Step 6: Update project config
+		if len(detail.Projects) > 0 {
+			projectConfig := filepath.Join(p.Dir(), "projects", detail.Projects[0]+".md")
+			if err := removeGoalFromProjectConfig(projectConfig, goalID); err != nil {
+				log.Printf("[DELETE] Failed to update project config: %v", err)
+			}
+		}
+
+		log.Printf("[DELETE] Goal %s deleted successfully", goalID)
+
+		// Emit SSE event
+		h.EmitEvent("goal_deleted", map[string]interface{}{
+			"goal_id":          goalID,
+			"worktree_removed": response.WorktreeRemoved,
+			"branch_deleted":   response.BranchDeleted,
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// removeWorktreeForGoal removes a worktree directory
+func removeWorktreeForGoal(projectBase, worktreeDir string) {
+	// Calculate relative path from projectBase to worktreeDir
+	relPath, err := filepath.Rel(projectBase, worktreeDir)
+	if err != nil {
+		relPath = worktreeDir
+	}
+	cmd := exec.Command("git", "-C", projectBase, "worktree", "remove", relPath, "--force")
+	if err := cmd.Run(); err != nil {
+		os.RemoveAll(worktreeDir)
+		exec.Command("git", "-C", projectBase, "worktree", "prune").Run()
+	}
+}
+
+// getUncommittedFiles returns a list of uncommitted files in a worktree
+func getUncommittedFiles(repoPath string) []string {
+	cmd := exec.Command("git", "-C", repoPath, "status", "--porcelain")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+
+	var files []string
+	for _, line := range lines {
+		if len(line) > 3 {
+			files = append(files, strings.TrimSpace(line[3:]))
+		}
+	}
+	return files
+}
+
+// deleteBranchForce forcefully deletes a branch
+func deleteBranchForce(projectBase, branchName string) error {
+	cmd := exec.Command("git", "-C", projectBase, "branch", "-D", branchName)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("could not delete branch: %s", strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// removeGoalFromRegistry removes a goal from REGISTRY.md
+func removeGoalFromRegistry(registryPath, goalID, folder string) error {
+	content, err := os.ReadFile(registryPath)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+
+	// Pattern to match goal row in any table
+	goalPattern := regexp.MustCompile(fmt.Sprintf(`^\| %s \|`, regexp.QuoteMeta(goalID)))
+
+	for _, line := range lines {
+		if goalPattern.MatchString(line) {
+			continue // Skip this line (remove from registry)
+		}
+		newLines = append(newLines, line)
+	}
+
+	return os.WriteFile(registryPath, []byte(strings.Join(newLines, "\n")), 0644)
+}
+
+// removeGoalFromProjectConfig removes a goal from a project's config file
+func removeGoalFromProjectConfig(configPath, goalID string) error {
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+
+	// Patterns to match goal references
+	listPattern := regexp.MustCompile(fmt.Sprintf(`^- #?%s:`, regexp.QuoteMeta(goalID)))
+	tablePattern := regexp.MustCompile(fmt.Sprintf(`^\| %s \|`, regexp.QuoteMeta(goalID)))
+
+	for _, line := range lines {
+		if listPattern.MatchString(line) || tablePattern.MatchString(line) {
+			continue // Skip this line (remove from config)
+		}
+		newLines = append(newLines, line)
+	}
+
+	return os.WriteFile(configPath, []byte(strings.Join(newLines, "\n")), 0644)
 }
 
 // handleCreateMR handles POST /api/goals/:id/create-mr - creates a merge request
