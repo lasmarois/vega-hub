@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useState } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from '@/components/layout'
-import { Home, Goals, Projects, History } from '@/pages'
+import { Home, Goals, Projects, History, Profile } from '@/pages'
 import type { ProjectStats } from '@/pages/Projects'
 import { useSSE } from '@/hooks/useSSE'
 import { useGoals } from '@/hooks/useGoals'
@@ -222,6 +222,10 @@ function AppContent() {
           <Route
             path="/history"
             element={<History goals={goals} loading={loading} onGoalClick={handleGoalClick} />}
+          />
+          <Route
+            path="/profile"
+            element={<Profile />}
           />
         </Route>
       </Routes>

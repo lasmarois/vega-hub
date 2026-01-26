@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { Home, FolderOpen, Target, History } from 'lucide-react'
+import { Home, FolderOpen, Target, History, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface BottomNavProps {
@@ -11,6 +11,7 @@ const navItems = [
   { to: '/projects', icon: FolderOpen, label: 'Projects' },
   { to: '/goals', icon: Target, label: 'Goals' },
   { to: '/history', icon: History, label: 'History' },
+  { to: '/profile', icon: User, label: 'Profile' },
 ]
 
 export function BottomNav({ pendingQuestions }: BottomNavProps) {
