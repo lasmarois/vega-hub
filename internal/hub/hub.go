@@ -28,16 +28,23 @@ type Hub struct {
 	subMu       sync.RWMutex
 
 	mdWriter *markdown.Writer
+
+	// Session history for persistent storage
+	history *SessionHistory
 }
 
 // Executor represents an active executor session
 type Executor struct {
-	SessionID string    `json:"session_id"`
-	GoalID    string    `json:"goal_id"`
-	CWD       string    `json:"cwd"`
-	StartedAt time.Time `json:"started_at"`
-	LogFile   string    `json:"log_file,omitempty"`
-	User      string    `json:"user,omitempty"` // Username who spawned this executor
+	SessionID        string    `json:"session_id"`          // vega-hub generated ID (primary)
+	ClaudeSessionID  string    `json:"claude_session_id"`   // Claude Code's session ID (from hooks)
+	TranscriptPath   string    `json:"transcript_path"`     // Path to Claude's conversation JSONL
+	GoalID           string    `json:"goal_id"`
+	CWD              string    `json:"cwd"`
+	StartedAt        time.Time `json:"started_at"`
+	StoppedAt        *time.Time `json:"stopped_at,omitempty"`
+	LogFile          string    `json:"log_file,omitempty"`
+	User             string    `json:"user,omitempty"`      // Username who spawned this executor
+	StopReason       string    `json:"stop_reason,omitempty"`
 }
 
 // Question represents a pending question from an executor
@@ -73,6 +80,7 @@ func New(dir string) *Hub {
 		executors:   make(map[string]*Executor),
 		subscribers: make(map[chan Event]bool),
 		mdWriter:    markdown.NewWriter(dir),
+		history:     NewSessionHistory(dir),
 	}
 }
 
@@ -101,6 +109,12 @@ func (h *Hub) RegisterExecutor(goalID string, sessionID, cwd, user string) strin
 	}
 	h.mu.Unlock()
 
+	// Record in persistent history
+	if err := h.history.RecordSessionStart(goalID, sessionID, cwd, user); err != nil {
+		// Log error but don't fail
+		// TODO: proper logging
+	}
+
 	// Write to markdown
 	if err := h.mdWriter.WriteExecutorEvent(goalID, sessionID, "Started", ""); err != nil {
 		// Log error but don't fail
@@ -123,12 +137,38 @@ func (h *Hub) RegisterExecutor(goalID string, sessionID, cwd, user string) strin
 	return context
 }
 
+// StopExecutorRequest contains information for stopping an executor
+type StopExecutorRequest struct {
+	GoalID          string `json:"goal_id"`
+	SessionID       string `json:"session_id"`        // vega-hub session ID
+	ClaudeSessionID string `json:"claude_session_id"` // Claude Code's session ID (from hooks)
+	TranscriptPath  string `json:"transcript_path"`   // Path to Claude's conversation JSONL
+	Reason          string `json:"reason"`
+}
+
 // StopExecutor marks an executor session as stopped
 func (h *Hub) StopExecutor(goalID string, sessionID, reason string) {
+	h.StopExecutorWithClaudeInfo(StopExecutorRequest{
+		GoalID:    goalID,
+		SessionID: sessionID,
+		Reason:    reason,
+	})
+}
+
+// StopExecutorWithClaudeInfo marks an executor session as stopped with Claude session info
+func (h *Hub) StopExecutorWithClaudeInfo(req StopExecutorRequest) {
 	// Get executor info before removing (for log file path)
 	h.mu.Lock()
-	executor := h.executors[sessionID]
-	delete(h.executors, sessionID)
+	executor := h.executors[req.SessionID]
+	if executor != nil {
+		// Update with Claude's session info
+		now := time.Now()
+		executor.ClaudeSessionID = req.ClaudeSessionID
+		executor.TranscriptPath = req.TranscriptPath
+		executor.StoppedAt = &now
+		executor.StopReason = req.Reason
+	}
+	delete(h.executors, req.SessionID)
 	h.mu.Unlock()
 
 	// Read output summary from log file
@@ -137,8 +177,13 @@ func (h *Hub) StopExecutor(goalID string, sessionID, reason string) {
 		outputSummary = h.readLastLines(executor.LogFile, 50)
 	}
 
+	// Record in persistent history (with Claude session info)
+	if err := h.history.RecordSessionStop(req.GoalID, req.SessionID, req.ClaudeSessionID, req.TranscriptPath, req.Reason); err != nil {
+		// Log error but don't fail
+	}
+
 	// Write to markdown
-	if err := h.mdWriter.WriteExecutorEvent(goalID, sessionID, "Stopped", reason); err != nil {
+	if err := h.mdWriter.WriteExecutorEvent(req.GoalID, req.SessionID, "Stopped", req.Reason); err != nil {
 		// Log error but don't fail
 	}
 
@@ -146,15 +191,17 @@ func (h *Hub) StopExecutor(goalID string, sessionID, reason string) {
 	h.broadcast(Event{
 		Type: "executor_stopped",
 		Data: map[string]interface{}{
-			"session_id": sessionID,
-			"goal_id":    goalID,
-			"reason":     reason,
-			"output":     outputSummary,
+			"session_id":        req.SessionID,
+			"claude_session_id": req.ClaudeSessionID,
+			"transcript_path":   req.TranscriptPath,
+			"goal_id":           req.GoalID,
+			"reason":            req.Reason,
+			"output":            outputSummary,
 		},
 	})
 
 	// Send desktop notification
-	h.sendDesktopNotification(goalID, reason)
+	h.sendDesktopNotification(req.GoalID, req.Reason)
 }
 
 // GetActiveExecutors returns all active executor sessions
@@ -258,6 +305,12 @@ func (h *Hub) Answer(id string, answer string) bool {
 
 	// Write to markdown
 	if err := h.mdWriter.WriteQA(q.GoalID, q.SessionID, q.Question, answer); err != nil {
+		// Log error but don't fail
+		// TODO: proper logging
+	}
+
+	// Record in persistent history
+	if err := h.history.RecordQuestion(q.GoalID, q.SessionID, q.Question, answer); err != nil {
 		// Log error but don't fail
 		// TODO: proper logging
 	}
@@ -380,4 +433,45 @@ func (h *Hub) GetExecutorOutputTail(goalID string, lines int) (string, error) {
 
 	logFile := filepath.Join(worktree, ".executor-output.log")
 	return h.readLastLines(logFile, lines), nil
+}
+
+// UpdateExecutorClaudeSession updates Claude's session info for an active executor
+// Called when hooks provide the Claude session ID
+func (h *Hub) UpdateExecutorClaudeSession(sessionID, claudeSessionID, transcriptPath string) {
+	h.mu.Lock()
+	if executor, ok := h.executors[sessionID]; ok {
+		executor.ClaudeSessionID = claudeSessionID
+		executor.TranscriptPath = transcriptPath
+	}
+	h.mu.Unlock()
+
+	// Also update in history
+	for goalID, sessions := range h.history.sessions {
+		for _, s := range sessions {
+			if s.SessionID == sessionID {
+				h.history.UpdateClaudeSession(goalID, sessionID, claudeSessionID, transcriptPath)
+				return
+			}
+		}
+	}
+}
+
+// GetGoalSessions returns session history for a goal
+func (h *Hub) GetGoalSessions(goalID string) ([]*ExecutorSession, error) {
+	return h.history.GetGoalSessions(goalID)
+}
+
+// GetGoalHistory returns detailed history entries for a goal
+func (h *Hub) GetGoalHistory(goalID string, limit int) ([]HistoryEntry, error) {
+	return h.history.GetGoalHistory(goalID, limit)
+}
+
+// GetSessionHistory returns history for a specific session
+func (h *Hub) GetSessionHistory(goalID, sessionID string) ([]HistoryEntry, error) {
+	return h.history.GetSessionHistory(goalID, sessionID)
+}
+
+// RecordQuestion records a Q&A in history
+func (h *Hub) RecordQuestionHistory(goalID, sessionID, question, answer string) error {
+	return h.history.RecordQuestion(goalID, sessionID, question, answer)
 }

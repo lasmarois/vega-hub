@@ -26,6 +26,8 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, p *goals.Parser) {
 	mux.HandleFunc("/api/goals", corsMiddleware(handleGoalsRoot(h, p)))
 	mux.HandleFunc("/api/goals/", corsMiddleware(handleGoalRoutes(h, p)))
 	mux.HandleFunc("/api/projects", corsMiddleware(handleProjects(h)))
+	// Session history routes
+	mux.HandleFunc("/api/history/", corsMiddleware(handleHistoryRoutes(h)))
 }
 
 // AskRequest is the request body for POST /api/ask
@@ -147,9 +149,11 @@ type ExecutorRegisterResponse struct {
 
 // ExecutorStopRequest is the request body for POST /api/executor/stop
 type ExecutorStopRequest struct {
-	GoalID    string `json:"goal_id"`
-	SessionID string `json:"session_id"`
-	Reason    string `json:"reason,omitempty"`
+	GoalID          string `json:"goal_id"`
+	SessionID       string `json:"session_id"`         // vega-hub session ID
+	ClaudeSessionID string `json:"claude_session_id"`  // Claude Code's session ID (from hooks)
+	TranscriptPath  string `json:"transcript_path"`    // Path to Claude's conversation JSONL
+	Reason          string `json:"reason,omitempty"`
 }
 
 // handleExecutorRegister handles POST /api/executor/register
@@ -192,8 +196,14 @@ func handleExecutorStop(h *hub.Hub) http.HandlerFunc {
 			return
 		}
 
-		// Stop the executor
-		h.StopExecutor(req.GoalID, req.SessionID, req.Reason)
+		// Stop the executor with Claude session info
+		h.StopExecutorWithClaudeInfo(hub.StopExecutorRequest{
+			GoalID:          req.GoalID,
+			SessionID:       req.SessionID,
+			ClaudeSessionID: req.ClaudeSessionID,
+			TranscriptPath:  req.TranscriptPath,
+			Reason:          req.Reason,
+		})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
@@ -439,6 +449,10 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleGoalCleanup(h, id)(w, r)
 		case "resume":
 			handleGoalResume(h, id)(w, r)
+		case "sessions":
+			handleGoalSessions(h, id)(w, r)
+		case "history":
+			handleGoalHistoryEntries(h, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -923,5 +937,108 @@ func handleProjects(h *hub.Hub) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(summaries)
+	}
+}
+
+// handleGoalSessions handles GET /api/goals/:id/sessions - returns session history for a goal
+func handleGoalSessions(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		sessions, err := h.GetGoalSessions(goalID)
+		if err != nil {
+			http.Error(w, "Failed to get sessions: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if sessions == nil {
+			sessions = []*hub.ExecutorSession{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(sessions)
+	}
+}
+
+// handleGoalHistoryEntries handles GET /api/goals/:id/history - returns detailed history for a goal
+func handleGoalHistoryEntries(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Check for limit parameter
+		limit := 0
+		if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
+			if l, err := strconv.Atoi(limitParam); err == nil {
+				limit = l
+			}
+		}
+
+		entries, err := h.GetGoalHistory(goalID, limit)
+		if err != nil {
+			http.Error(w, "Failed to get history: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if entries == nil {
+			entries = []hub.HistoryEntry{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+	}
+}
+
+// handleHistoryRoutes handles /api/history/* routes
+func handleHistoryRoutes(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Parse path: /api/history/:goal_id or /api/history/:goal_id/:session_id
+		path := strings.TrimPrefix(r.URL.Path, "/api/history/")
+		parts := strings.SplitN(path, "/", 2)
+
+		if len(parts) == 0 || parts[0] == "" {
+			http.Error(w, "Missing goal ID", http.StatusBadRequest)
+			return
+		}
+
+		goalID := parts[0]
+
+		if len(parts) == 1 {
+			// GET /api/history/:goal_id - returns all history for a goal
+			handleGoalHistoryEntries(h, goalID)(w, r)
+			return
+		}
+
+		sessionID := parts[1]
+		// GET /api/history/:goal_id/:session_id - returns history for a specific session
+		handleSessionHistory(h, goalID, sessionID)(w, r)
+	}
+}
+
+// handleSessionHistory handles GET /api/history/:goal_id/:session_id - returns history for a specific session
+func handleSessionHistory(h *hub.Hub, goalID, sessionID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		entries, err := h.GetSessionHistory(goalID, sessionID)
+		if err != nil {
+			http.Error(w, "Failed to get session history: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if entries == nil {
+			entries = []hub.HistoryEntry{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
 	}
 }
