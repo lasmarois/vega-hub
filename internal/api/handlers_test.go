@@ -363,3 +363,255 @@ func TestHandleGoalOutput_Tail(t *testing.T) {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
 }
+
+func TestHandleGoalChat_Empty(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
+	req := httptest.NewRequest("GET", "/api/goals/abc1234/chat", nil)
+	w := httptest.NewRecorder()
+
+	handler := handleGoalChat(h, "abc1234")
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var messages []ChatMessage
+	json.Unmarshal(w.Body.Bytes(), &messages)
+
+	// Should be empty when no history
+	if len(messages) != 0 {
+		t.Errorf("expected 0 messages, got %d", len(messages))
+	}
+}
+
+func TestHandleGoalChat_WithHistory(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
+	// Register and stop an executor to create history
+	h.RegisterExecutor("abc1234", "session-001", "/path/to/worktree", "testuser")
+	h.StopExecutor("abc1234", "session-001", "completed")
+
+	req := httptest.NewRequest("GET", "/api/goals/abc1234/chat", nil)
+	w := httptest.NewRecorder()
+
+	handler := handleGoalChat(h, "abc1234")
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var messages []ChatMessage
+	json.Unmarshal(w.Body.Bytes(), &messages)
+
+	// Should have session_start and session_stop messages
+	if len(messages) < 2 {
+		t.Errorf("expected at least 2 messages, got %d", len(messages))
+	}
+
+	// First message should be session_start
+	if len(messages) > 0 && messages[0].Type != "session_start" {
+		t.Errorf("expected first message type 'session_start', got '%s'", messages[0].Type)
+	}
+}
+
+func TestHandleGoalChat_SessionFilter(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
+	// Create history for two sessions
+	h.RegisterExecutor("abc1234", "session-001", "/path1", "user1")
+	h.StopExecutor("abc1234", "session-001", "done")
+	h.RegisterExecutor("abc1234", "session-002", "/path2", "user2")
+	h.StopExecutor("abc1234", "session-002", "done")
+
+	// Request with session filter
+	req := httptest.NewRequest("GET", "/api/goals/abc1234/chat?session=session-001", nil)
+	w := httptest.NewRecorder()
+
+	handler := handleGoalChat(h, "abc1234")
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var messages []ChatMessage
+	json.Unmarshal(w.Body.Bytes(), &messages)
+
+	// All messages should be from session-001
+	for _, msg := range messages {
+		if msg.SessionID != "session-001" {
+			t.Errorf("expected session 'session-001', got '%s'", msg.SessionID)
+		}
+	}
+}
+
+func TestHandleGoalChat_Limit(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
+	// Create history
+	h.RegisterExecutor("abc1234", "session-001", "/path", "user")
+	h.StopExecutor("abc1234", "session-001", "done")
+
+	// Request with limit=1
+	req := httptest.NewRequest("GET", "/api/goals/abc1234/chat?limit=1", nil)
+	w := httptest.NewRecorder()
+
+	handler := handleGoalChat(h, "abc1234")
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var messages []ChatMessage
+	json.Unmarshal(w.Body.Bytes(), &messages)
+
+	// Should have at most 1 message
+	if len(messages) > 1 {
+		t.Errorf("expected at most 1 message, got %d", len(messages))
+	}
+}
+
+func TestHandleGoalChat_MethodNotAllowed(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
+	req := httptest.NewRequest("POST", "/api/goals/abc1234/chat", nil)
+	w := httptest.NewRecorder()
+
+	handler := handleGoalChat(h, "abc1234")
+	handler(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected status 405, got %d", w.Code)
+	}
+}
+
+func TestHandleSendMessage(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
+	body := `{"content": "Hello executor!", "user": "testuser"}`
+	req := httptest.NewRequest("POST", "/api/goals/abc1234/messages", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler := handleGoalMessages(h, "abc1234")
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &response)
+	if !response["ok"].(bool) {
+		t.Error("expected ok to be true")
+	}
+
+	// Verify message was stored
+	if !h.HasPendingUserMessages("abc1234") {
+		t.Error("expected pending messages")
+	}
+}
+
+func TestHandleSendMessage_EmptyContent(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
+	body := `{"content": ""}`
+	req := httptest.NewRequest("POST", "/api/goals/abc1234/messages", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler := handleGoalMessages(h, "abc1234")
+	handler(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestHandleCheckPendingMessages_None(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
+	req := httptest.NewRequest("GET", "/api/goals/abc1234/messages", nil)
+	w := httptest.NewRecorder()
+
+	handler := handleGoalMessages(h, "abc1234")
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &response)
+	if response["has_pending"].(bool) {
+		t.Error("expected no pending messages")
+	}
+}
+
+func TestHandleGetPendingMessages_WithMessages(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
+	// Send a message first
+	h.SendUserMessage("abc1234", "Test message", "testuser")
+
+	req := httptest.NewRequest("GET", "/api/goals/abc1234/messages/pending", nil)
+	w := httptest.NewRecorder()
+
+	// Call handleGetPendingMessages directly (routing now goes here for /pending)
+	handler := handleGetPendingMessages(h, "abc1234")
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var response PendingMessagesResponse
+	json.Unmarshal(w.Body.Bytes(), &response)
+
+	if !response.HasMessages {
+		t.Error("expected has_messages to be true")
+	}
+	if response.Decision != "block" {
+		t.Errorf("expected decision 'block', got '%s'", response.Decision)
+	}
+	if len(response.Messages) != 1 {
+		t.Errorf("expected 1 message, got %d", len(response.Messages))
+	}
+	if response.Messages[0].Content != "Test message" {
+		t.Errorf("expected content 'Test message', got '%s'", response.Messages[0].Content)
+	}
+
+	// Messages should be cleared after retrieval
+	if h.HasPendingUserMessages("abc1234") {
+		t.Error("expected messages to be cleared after retrieval")
+	}
+}
+
+func TestHandleGetPendingMessages_NoMessages(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
+	req := httptest.NewRequest("GET", "/api/goals/abc1234/messages/pending", nil)
+	w := httptest.NewRecorder()
+
+	// Call handleGetPendingMessages directly (routing now goes here for /pending)
+	handler := handleGetPendingMessages(h, "abc1234")
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var response PendingMessagesResponse
+	json.Unmarshal(w.Body.Bytes(), &response)
+
+	if response.HasMessages {
+		t.Error("expected has_messages to be false")
+	}
+	if response.Decision != "allow" {
+		t.Errorf("expected decision 'allow', got '%s'", response.Decision)
+	}
+}

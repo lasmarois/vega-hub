@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -434,7 +435,12 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 		}
 
 		action := parts[1]
-		switch action {
+
+		// Handle nested paths like "messages/pending"
+		actionParts := strings.SplitN(action, "/", 2)
+		baseAction := actionParts[0]
+
+		switch baseAction {
 		case "spawn":
 			handleGoalSpawn(h, id)(w, r)
 		case "status":
@@ -453,6 +459,15 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleGoalSessions(h, id)(w, r)
 		case "history":
 			handleGoalHistoryEntries(h, id)(w, r)
+		case "chat":
+			handleGoalChat(h, id)(w, r)
+		case "messages":
+			// Check for nested path like "messages/pending"
+			if len(actionParts) > 1 && actionParts[1] == "pending" {
+				handleGetPendingMessages(h, id)(w, r)
+			} else {
+				handleGoalMessages(h, id)(w, r)
+			}
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -1020,6 +1035,151 @@ func handleHistoryRoutes(h *hub.Hub) http.HandlerFunc {
 	}
 }
 
+// ChatMessage represents a message in the chat thread
+// It transforms HistoryEntry to a format optimized for the chat UI
+type ChatMessage struct {
+	ID           string                 `json:"id"`
+	Type         string                 `json:"type"` // "session_start", "session_stop", "question", "answer", "user_message", "activity"
+	Timestamp    string                 `json:"timestamp"`
+	SessionID    string                 `json:"session_id"`
+	GoalID       string                 `json:"goal_id"`
+	Content      string                 `json:"content,omitempty"`       // question/answer/user_message text
+	Answer       string                 `json:"answer,omitempty"`        // for question messages with answer
+	ActivityType string                 `json:"activity_type,omitempty"` // for activity messages
+	Data         map[string]interface{} `json:"data,omitempty"`          // activity details (expandable)
+	Pending      bool                   `json:"pending,omitempty"`       // true for unanswered questions
+	Options      []hub.Option           `json:"options,omitempty"`       // for questions with predefined choices
+	User         string                 `json:"user,omitempty"`          // who sent (executor user, answering user)
+	StopReason   string                 `json:"stop_reason,omitempty"`   // for session_stop
+}
+
+// handleGoalChat handles GET /api/goals/:id/chat - returns chat history as ChatMessage[]
+// Query params:
+//   - session: filter to specific session ID
+//   - limit: max number of messages (default: 100)
+func handleGoalChat(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse query params
+		sessionFilter := r.URL.Query().Get("session")
+		limit := 100
+		if limitParam := r.URL.Query().Get("limit"); limitParam != "" {
+			if l, err := strconv.Atoi(limitParam); err == nil && l > 0 {
+				limit = l
+			}
+		}
+
+		// Get history entries
+		var entries []hub.HistoryEntry
+		var err error
+		if sessionFilter != "" {
+			entries, err = h.GetSessionHistory(goalID, sessionFilter)
+		} else {
+			entries, err = h.GetGoalHistory(goalID, 0) // Get all, we'll limit after merging pending
+		}
+		if err != nil {
+			http.Error(w, "Failed to get chat history: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Convert history entries to chat messages
+		messages := make([]ChatMessage, 0, len(entries))
+		for i, entry := range entries {
+			msg := ChatMessage{
+				ID:        fmt.Sprintf("hist-%d", i),
+				Type:      entry.Type,
+				Timestamp: entry.Timestamp.Format(time.RFC3339),
+				SessionID: entry.SessionID,
+				GoalID:    entry.GoalID,
+				User:      entry.User,
+			}
+
+			switch entry.Type {
+			case "session_start":
+				msg.Content = fmt.Sprintf("Executor started in %s", entry.CWD)
+			case "session_stop":
+				msg.StopReason = entry.StopReason
+				if entry.StopReason != "" {
+					msg.Content = fmt.Sprintf("Executor stopped: %s", entry.StopReason)
+				} else {
+					msg.Content = "Executor stopped"
+				}
+			case "question":
+				msg.Content = entry.Question
+				msg.Answer = entry.Answer
+				msg.Pending = entry.Answer == "" // Pending if no answer recorded
+			case "user_message", "user_message_delivered":
+				// Extract content and user from Data field
+				if entry.Data != nil {
+					if dataMap, ok := entry.Data.(map[string]interface{}); ok {
+						msg.Data = dataMap
+						if content, ok := dataMap["content"].(string); ok {
+							msg.Content = content
+						}
+						if user, ok := dataMap["user"].(string); ok {
+							msg.User = user
+						}
+						if pending, ok := dataMap["pending"].(bool); ok {
+							msg.Pending = pending
+						}
+					}
+				}
+			case "activity":
+				msg.ActivityType = entry.Type
+				if entry.Data != nil {
+					if dataMap, ok := entry.Data.(map[string]interface{}); ok {
+						msg.Data = dataMap
+					}
+				}
+			default:
+				msg.Content = entry.Question // Fallback
+			}
+
+			messages = append(messages, msg)
+		}
+
+		// Add pending questions that aren't in history yet
+		pendingQuestions := h.GetPendingQuestions()
+		for _, q := range pendingQuestions {
+			if q.GoalID == goalID && (sessionFilter == "" || q.SessionID == sessionFilter) {
+				// Check if this question is already in messages (by matching question text and session)
+				alreadyExists := false
+				for _, m := range messages {
+					if m.Type == "question" && m.Content == q.Question && m.SessionID == q.SessionID {
+						alreadyExists = true
+						break
+					}
+				}
+				if !alreadyExists {
+					msg := ChatMessage{
+						ID:        "pending-" + q.ID,
+						Type:      "question",
+						Timestamp: q.CreatedAt.Format(time.RFC3339),
+						SessionID: q.SessionID,
+						GoalID:    q.GoalID,
+						Content:   q.Question,
+						Options:   q.Options,
+						Pending:   true,
+					}
+					messages = append(messages, msg)
+				}
+			}
+		}
+
+		// Apply limit (take last N messages)
+		if len(messages) > limit {
+			messages = messages[len(messages)-limit:]
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(messages)
+	}
+}
+
 // handleSessionHistory handles GET /api/history/:goal_id/:session_id - returns history for a specific session
 func handleSessionHistory(h *hub.Hub, goalID, sessionID string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -1040,5 +1200,124 @@ func handleSessionHistory(h *hub.Hub, goalID, sessionID string) http.HandlerFunc
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(entries)
+	}
+}
+
+// SendMessageRequest is the request body for POST /api/goals/:id/messages
+type SendMessageRequest struct {
+	Content string `json:"content"`
+	User    string `json:"user,omitempty"`
+}
+
+// PendingMessagesResponse is the response for GET /api/goals/:id/messages/pending
+type PendingMessagesResponse struct {
+	HasMessages bool              `json:"has_messages"`
+	Messages    []*hub.UserMessage `json:"messages"`
+	// For Stop hook decision
+	Decision string `json:"decision,omitempty"` // "block" or "allow"
+	Reason   string `json:"reason,omitempty"`   // context to inject
+}
+
+// handleGoalMessages handles /api/goals/:id/messages
+// POST - send a message to the executor
+// GET - check pending message count
+func handleGoalMessages(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			handleSendMessage(h, goalID)(w, r)
+		case http.MethodGet:
+			// GET /api/goals/:id/messages - return pending count
+			handleCheckPendingMessages(h, goalID)(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// handleSendMessage handles POST /api/goals/:id/messages - user sends message to executor
+func handleSendMessage(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req SendMessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if req.Content == "" {
+			http.Error(w, "Content is required", http.StatusBadRequest)
+			return
+		}
+
+		// Get user from header or request
+		user := r.Header.Get("X-Vega-User")
+		if user == "" {
+			user = req.User
+		}
+
+		msg := h.SendUserMessage(goalID, req.Content, user)
+
+		log.Printf("[MESSAGE] User message sent to goal %s: %q (user: %s)", goalID, req.Content, user)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":      true,
+			"message": msg,
+		})
+	}
+}
+
+// handleCheckPendingMessages handles GET /api/goals/:id/messages - check pending message count
+func handleCheckPendingMessages(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		hasPending := h.HasPendingUserMessages(goalID)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"has_pending": hasPending,
+		})
+	}
+}
+
+// handleGetPendingMessages handles GET /api/goals/:id/messages/pending
+// Called by Stop hook to retrieve and clear pending messages
+// Returns decision for the Stop hook
+func handleGetPendingMessages(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Get and clear pending messages
+		messages := h.GetPendingUserMessages(goalID)
+
+		response := PendingMessagesResponse{
+			HasMessages: len(messages) > 0,
+			Messages:    messages,
+		}
+
+		if len(messages) > 0 {
+			// Build context string from all messages
+			var contextParts []string
+			for _, msg := range messages {
+				if msg.User != "" {
+					contextParts = append(contextParts, fmt.Sprintf("[User %s]: %s", msg.User, msg.Content))
+				} else {
+					contextParts = append(contextParts, fmt.Sprintf("[User]: %s", msg.Content))
+				}
+			}
+			context := strings.Join(contextParts, "\n")
+
+			response.Decision = "block"
+			response.Reason = fmt.Sprintf("You have new messages from the user. Please read and address them before stopping:\n\n%s", context)
+
+			log.Printf("[MESSAGE] Stop hook blocked for goal %s: %d pending messages", goalID, len(messages))
+		} else {
+			response.Decision = "allow"
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 	}
 }

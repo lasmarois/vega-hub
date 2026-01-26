@@ -20,6 +20,10 @@ type Hub struct {
 	executors map[string]*Executor
 	mu        sync.RWMutex
 
+	// Pending user messages (user → executor communication)
+	userMessages map[string][]*UserMessage // goal_id -> messages
+	msgMu        sync.RWMutex
+
 	// Spawn lock - prevents concurrent spawns for same goal
 	spawnMu sync.Mutex
 
@@ -31,6 +35,15 @@ type Hub struct {
 
 	// Session history for persistent storage
 	history *SessionHistory
+}
+
+// UserMessage represents a message from a user to an executor
+type UserMessage struct {
+	ID        string    `json:"id"`
+	GoalID    string    `json:"goal_id"`
+	Content   string    `json:"content"`
+	User      string    `json:"user,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Executor represents an active executor session
@@ -75,12 +88,13 @@ type Event struct {
 // New creates a new Hub instance
 func New(dir string) *Hub {
 	return &Hub{
-		dir:         dir,
-		questions:   make(map[string]*Question),
-		executors:   make(map[string]*Executor),
-		subscribers: make(map[chan Event]bool),
-		mdWriter:    markdown.NewWriter(dir),
-		history:     NewSessionHistory(dir),
+		dir:          dir,
+		questions:    make(map[string]*Question),
+		executors:    make(map[string]*Executor),
+		userMessages: make(map[string][]*UserMessage),
+		subscribers:  make(map[chan Event]bool),
+		mdWriter:     markdown.NewWriter(dir),
+		history:      NewSessionHistory(dir),
 	}
 }
 
@@ -340,6 +354,71 @@ func (h *Hub) GetPendingQuestions() []*Question {
 		questions = append(questions, q)
 	}
 	return questions
+}
+
+// SendUserMessage sends a message from a user to an executor
+// The message is stored until the executor's Stop hook retrieves it
+func (h *Hub) SendUserMessage(goalID, content, user string) *UserMessage {
+	msg := &UserMessage{
+		ID:        fmt.Sprintf("msg-%d", time.Now().UnixNano()),
+		GoalID:    goalID,
+		Content:   content,
+		User:      user,
+		CreatedAt: time.Now(),
+	}
+
+	h.msgMu.Lock()
+	h.userMessages[goalID] = append(h.userMessages[goalID], msg)
+	h.msgMu.Unlock()
+
+	// Record to history (pending message)
+	h.history.RecordActivity(goalID, "", "user_message", map[string]interface{}{
+		"content": content,
+		"user":    user,
+		"pending": true,
+	})
+
+	// Broadcast event
+	h.broadcast(Event{
+		Type: "user_message",
+		Data: map[string]interface{}{
+			"goal_id": goalID,
+			"content": content,
+			"user":    user,
+		},
+	})
+
+	return msg
+}
+
+// GetPendingUserMessages returns and clears pending user messages for a goal
+// Called by the Stop hook to check if there are messages to inject
+func (h *Hub) GetPendingUserMessages(goalID string) []*UserMessage {
+	h.msgMu.Lock()
+	defer h.msgMu.Unlock()
+
+	messages := h.userMessages[goalID]
+	if len(messages) > 0 {
+		// Clear pending messages after retrieval
+		delete(h.userMessages, goalID)
+
+		// Record delivery in history
+		for _, msg := range messages {
+			h.history.RecordActivity(goalID, "", "user_message_delivered", map[string]interface{}{
+				"content": msg.Content,
+				"user":    msg.User,
+			})
+		}
+	}
+
+	return messages
+}
+
+// HasPendingUserMessages checks if there are pending messages without consuming them
+func (h *Hub) HasPendingUserMessages(goalID string) bool {
+	h.msgMu.RLock()
+	defer h.msgMu.RUnlock()
+	return len(h.userMessages[goalID]) > 0
 }
 
 // Subscribe returns a channel for receiving events

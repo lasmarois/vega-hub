@@ -90,3 +90,31 @@ export interface Project {
   workspace_status: 'ready' | 'missing' | 'error'
   workspace_error?: string
 }
+
+// UserMessage represents a message from a user to an executor
+// Used for bidirectional communication (user → executor)
+export interface UserMessage {
+  id: string
+  goal_id: string
+  content: string
+  user?: string
+  created_at: string
+}
+
+// ChatMessage represents a message in the chat thread
+// Returned by GET /api/goals/:id/chat
+export interface ChatMessage {
+  id: string
+  type: 'session_start' | 'session_stop' | 'question' | 'answer' | 'user_message' | 'activity'
+  timestamp: string
+  session_id: string
+  goal_id: string
+  content?: string           // question/answer/user_message text
+  answer?: string            // for question messages with answer
+  activity_type?: string     // for activity messages
+  data?: Record<string, unknown>  // activity details (expandable)
+  pending?: boolean          // true for unanswered questions
+  options?: { label: string; description?: string }[]
+  user?: string              // who sent (executor user, answering user)
+  stop_reason?: string       // for session_stop
+}
