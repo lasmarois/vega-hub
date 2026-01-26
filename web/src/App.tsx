@@ -6,6 +6,7 @@ import type { ProjectStats } from '@/pages/Projects'
 import { useSSE } from '@/hooks/useSSE'
 import { useGoals } from '@/hooks/useGoals'
 import { useActivity } from '@/hooks/useActivity'
+import { useUser } from '@/hooks/useUser'
 import { toast } from '@/hooks/useToast'
 import { GoalSheet } from '@/components/goals/GoalSheet'
 import { ProjectSheet } from '@/components/projects/ProjectSheet'
@@ -38,6 +39,8 @@ function AppContent() {
     recordGoalIced,
     recordGoalCompleted,
   } = useActivity()
+
+  const { user } = useUser()
 
   const [sheetOpen, setSheetOpen] = useState(false)
   const [projectSheetOpen, setProjectSheetOpen] = useState(false)
@@ -193,6 +196,7 @@ function AppContent() {
             onMarkAsRead={markAsRead}
             onMarkAllAsRead={markAllAsRead}
             onGoalClick={handleGoalClick}
+            user={user}
           />
         }>
           <Route

@@ -1,7 +1,9 @@
+import { User as UserIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { NotificationCenter } from '@/components/shared/NotificationCenter'
 import { cn } from '@/lib/utils'
 import type { ActivityWithRead } from '@/hooks/useActivity'
+import type { User } from '@/hooks/useUser'
 
 interface HeaderProps {
   connected: boolean
@@ -11,6 +13,7 @@ interface HeaderProps {
   onMarkAsRead: (id: string) => void
   onMarkAllAsRead: () => void
   onGoalClick?: (goalId: string) => void
+  user?: User | null
 }
 
 export function Header({
@@ -21,6 +24,7 @@ export function Header({
   onMarkAsRead,
   onMarkAllAsRead,
   onGoalClick,
+  user,
 }: HeaderProps) {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -37,6 +41,12 @@ export function Header({
         </div>
 
         <div className="flex items-center gap-2">
+          {user && (
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <UserIcon className="h-4 w-4" />
+              <span className="hidden sm:inline">{user.username}</span>
+            </div>
+          )}
           {pendingQuestions > 0 && (
             <Badge variant="destructive" className="gap-1.5">
               <span className="text-sm">Pending</span>

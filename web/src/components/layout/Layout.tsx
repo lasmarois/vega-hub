@@ -1,10 +1,11 @@
 import { Outlet } from 'react-router-dom'
-import { WifiOff } from 'lucide-react'
+import { WifiOff, User as UserIcon } from 'lucide-react'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
 import { BottomNav } from './BottomNav'
 import { NotificationCenter } from '@/components/shared/NotificationCenter'
 import type { ActivityWithRead } from '@/hooks/useActivity'
+import type { User } from '@/hooks/useUser'
 
 interface LayoutProps {
   connected: boolean
@@ -14,6 +15,7 @@ interface LayoutProps {
   onMarkAsRead: (id: string) => void
   onMarkAllAsRead: () => void
   onGoalClick?: (goalId: string) => void
+  user?: User | null
 }
 
 export function Layout({
@@ -24,6 +26,7 @@ export function Layout({
   onMarkAsRead,
   onMarkAllAsRead,
   onGoalClick,
+  user,
 }: LayoutProps) {
   return (
     <div className="min-h-screen bg-background">
@@ -48,6 +51,7 @@ export function Layout({
           onMarkAsRead={onMarkAsRead}
           onMarkAllAsRead={onMarkAllAsRead}
           onGoalClick={onGoalClick}
+          user={user}
         />
       </div>
 
@@ -56,6 +60,12 @@ export function Layout({
         {/* Desktop header with connection status and notifications */}
         <div className="hidden lg:block sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="flex h-14 items-center justify-end gap-4 px-6">
+            {user && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <UserIcon className="h-4 w-4" />
+                <span>{user.username}</span>
+              </div>
+            )}
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <span>{connected ? 'Connected' : 'Reconnecting...'}</span>
               <div
