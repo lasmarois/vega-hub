@@ -627,6 +627,21 @@ func CreateGoal(opts CreateOptions) (*Result, *CreateResult) {
 		// Copy hooks to worktree
 		copyHooksToWorktree(opts.VegaDir, worktreePath)
 
+		// Write worktree metadata to goal file
+		worktreeSection := fmt.Sprintf("\n## Worktree\n- **Branch**: %s\n- **Project**: %s\n- **Path**: workspaces/%s/%s\n- **Base Branch**: %s\n- **Created**: %s\n",
+			branchName, opts.Project, opts.Project, branchName, baseBranch, time.Now().Format("2006-01-02"))
+
+		// Read existing content and insert before Status section
+		if content, err := os.ReadFile(goalFile); err == nil {
+			contentStr := string(content)
+			if idx := strings.Index(contentStr, "## Status"); idx != -1 {
+				contentStr = contentStr[:idx] + worktreeSection + "\n" + contentStr[idx:]
+			} else {
+				contentStr += worktreeSection
+			}
+			os.WriteFile(goalFile, []byte(contentStr), 0644)
+		}
+
 		// Update project config
 		projectConfig := filepath.Join(opts.VegaDir, "projects", opts.Project+".md")
 		addGoalToProjectConfig(projectConfig, goalID, opts.Title)
