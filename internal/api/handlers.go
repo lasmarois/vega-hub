@@ -411,6 +411,7 @@ type GoalDetailResponse struct {
 type SpawnRequest struct {
 	Context string `json:"context,omitempty"`
 	User    string `json:"user,omitempty"` // Username spawning this executor
+	Mode    string `json:"mode,omitempty"` // Executor mode: plan, implement, review, test, security, quick
 }
 
 // handleGoalRoutes routes /api/goals/:id/* requests
@@ -565,12 +566,20 @@ func handleGoalSpawn(h *hub.Hub, goalID string) http.HandlerFunc {
 			user = req.User
 		}
 
-		log.Printf("[SPAWN] Processing spawn for Goal #%s, context: %q, user: %q", goalID, req.Context, user)
+		// Validate mode if specified
+		mode := req.Mode
+		if mode != "" && !hub.ValidModes[mode] {
+			http.Error(w, fmt.Sprintf("Invalid mode: %s. Valid modes: plan, implement, review, test, security, quick", mode), http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[SPAWN] Processing spawn for Goal #%s, context: %q, user: %q, mode: %q", goalID, req.Context, user, mode)
 
 		result := h.SpawnExecutor(hub.SpawnRequest{
 			GoalID:  goalID,
 			Context: req.Context,
 			User:    user,
+			Mode:    mode,
 		})
 
 		log.Printf("[SPAWN] Result for Goal #%s: success=%v, message=%s", goalID, result.Success, result.Message)

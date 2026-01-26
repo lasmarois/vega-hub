@@ -10,11 +10,22 @@ import (
 	"strings"
 )
 
+// ValidModes defines the allowed executor modes
+var ValidModes = map[string]bool{
+	"plan":      true,
+	"implement": true,
+	"review":    true,
+	"test":      true,
+	"security":  true,
+	"quick":     true,
+}
+
 // SpawnRequest contains parameters for spawning an executor
 type SpawnRequest struct {
 	GoalID  string `json:"goal_id"`
 	Context string `json:"context,omitempty"` // Optional additional context/instructions
 	User    string `json:"user,omitempty"`    // Username spawning this executor (auto-detected if empty)
+	Mode    string `json:"mode,omitempty"`    // Executor mode: plan, implement, review, test, security, quick
 }
 
 // SpawnResult contains the result of spawning an executor
@@ -86,11 +97,15 @@ func (h *Hub) SpawnExecutor(req SpawnRequest) SpawnResult {
 	cmd := exec.Command("claude", args...)
 	cmd.Dir = worktree
 
-	// Build environment: inherit current env + inject VEGA_HUB_PORT
-	// This allows executor hooks to communicate with vega-hub
+	// Build environment: inherit current env + inject vega-hub vars
+	// This allows executor hooks to communicate with vega-hub and know their mode
 	env := os.Environ()
 	if h.port > 0 {
 		env = append(env, fmt.Sprintf("VEGA_HUB_PORT=%d", h.port))
+	}
+	// Inject mode if specified (validated before spawn)
+	if req.Mode != "" {
+		env = append(env, fmt.Sprintf("VEGA_HUB_MODE=%s", req.Mode))
 	}
 	cmd.Env = env
 

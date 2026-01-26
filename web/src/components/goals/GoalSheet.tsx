@@ -10,6 +10,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -39,6 +46,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
   const [spawning, setSpawning] = useState(false)
   const [showSpawnInput, setShowSpawnInput] = useState(false)
   const [spawnContext, setSpawnContext] = useState('')
+  const [spawnMode, setSpawnMode] = useState('')
   const [expanded, setExpanded] = useState(false)
   const [actionMenuOpen, setActionMenuOpen] = useState(false)
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false)
@@ -72,13 +80,17 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
       const res = await fetch(`/api/goals/${goal.id}/spawn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context: spawnContext || undefined }),
+        body: JSON.stringify({
+          context: spawnContext || undefined,
+          mode: spawnMode || undefined,
+        }),
       })
 
       const data = await res.json()
       if (data.success) {
         setShowSpawnInput(false)
         setSpawnContext('')
+        setSpawnMode('')
         onRefresh()
       } else {
         alert('Failed to spawn executor: ' + data.message)
@@ -176,27 +188,48 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
             {goal.status === 'active' && (
               <>
                 {showSpawnInput ? (
-                  <div className="flex-1 flex gap-2">
-                    <Input
-                      placeholder="Context (optional)"
-                      value={spawnContext}
-                      onChange={(e) => setSpawnContext(e.target.value)}
-                      className="flex-1"
-                    />
-                    <Button
-                      onClick={handleSpawnExecutor}
-                      disabled={spawning}
-                      size="sm"
-                    >
-                      {spawning ? 'Starting...' : 'Start'}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowSpawnInput(false)}
-                    >
-                      Cancel
-                    </Button>
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      <Select value={spawnMode} onValueChange={setSpawnMode}>
+                        <SelectTrigger className="w-[140px]">
+                          <SelectValue placeholder="Mode" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="implement">Implement</SelectItem>
+                          <SelectItem value="plan">Plan</SelectItem>
+                          <SelectItem value="review">Review</SelectItem>
+                          <SelectItem value="test">Test</SelectItem>
+                          <SelectItem value="security">Security</SelectItem>
+                          <SelectItem value="quick">Quick</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        placeholder="Context (optional)"
+                        value={spawnContext}
+                        onChange={(e) => setSpawnContext(e.target.value)}
+                        className="flex-1"
+                      />
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setShowSpawnInput(false)
+                          setSpawnMode('')
+                          setSpawnContext('')
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handleSpawnExecutor}
+                        disabled={spawning}
+                        size="sm"
+                      >
+                        {spawning ? 'Starting...' : 'Start'}
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <Button

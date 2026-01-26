@@ -17,7 +17,18 @@ import (
 
 var (
 	spawnPrompt string
+	spawnMode   string
 )
+
+// ValidModes defines the allowed executor modes
+var ValidModes = map[string]bool{
+	"plan":      true,
+	"implement": true,
+	"review":    true,
+	"test":      true,
+	"security":  true,
+	"quick":     true,
+}
 
 // SpawnResult contains the result of spawning an executor
 type SpawnResult struct {
@@ -32,6 +43,7 @@ type SpawnResult struct {
 type SpawnRequest struct {
 	Context string `json:"context,omitempty"`
 	User    string `json:"user,omitempty"` // Username spawning this executor
+	Mode    string `json:"mode,omitempty"` // Executor mode: plan, implement, review, test, security, quick
 }
 
 // SpawnResponse is the response from the spawn API
@@ -52,12 +64,23 @@ var spawnCmd = &cobra.Command{
 Examples:
   vega-hub executor spawn f3a8b2c
   vega-hub executor spawn f3a8b2c --prompt "Focus on Phase 2"
+  vega-hub executor spawn f3a8b2c --mode plan
+  vega-hub executor spawn f3a8b2c --mode implement
+
+Available modes:
+  plan      - Create implementation plan (task_plan.md, findings.md)
+  implement - Write code and tests (default behavior)
+  review    - Code review and feedback
+  test      - Write and run tests
+  security  - Security audit
+  quick     - Answer questions (no planning files)
 
 The executor will:
   1. Start in the goal's worktree directory
   2. Load context from inherited .claude/ rules
-  3. Work autonomously on the goal
-  4. Communicate via vega-hub for questions
+  3. Receive mode-specific instructions (if --mode specified)
+  4. Work autonomously on the goal
+  5. Communicate via vega-hub for questions
 
 NOTE: vega-hub must be running. Use 'vega-hub start' first.`,
 	Args: cobra.ExactArgs(1),
@@ -67,6 +90,7 @@ NOTE: vega-hub must be running. Use 'vega-hub start' first.`,
 func init() {
 	ExecutorCmd.AddCommand(spawnCmd)
 	spawnCmd.Flags().StringVarP(&spawnPrompt, "prompt", "p", "", "Custom prompt/context for the executor")
+	spawnCmd.Flags().StringVarP(&spawnMode, "mode", "m", "", "Executor mode: plan, implement, review, test, security, quick")
 }
 
 func runSpawn(c *cobra.Command, args []string) {
@@ -91,6 +115,15 @@ func runSpawn(c *cobra.Command, args []string) {
 			})
 	}
 
+	// Validate mode if specified
+	if spawnMode != "" && !ValidModes[spawnMode] {
+		validModesList := "plan, implement, review, test, security, quick"
+		cli.OutputError(cli.ExitValidationError, "invalid_mode",
+			fmt.Sprintf("Invalid mode: %s", spawnMode),
+			map[string]string{"valid_modes": validModesList},
+			nil)
+	}
+
 	// Detect current user
 	var username string
 	if u, err := user.Current(); err == nil {
@@ -101,6 +134,7 @@ func runSpawn(c *cobra.Command, args []string) {
 	reqBody := SpawnRequest{
 		Context: spawnPrompt,
 		User:    username,
+		Mode:    spawnMode,
 	}
 	if reqBody.Context == "" {
 		reqBody.Context = "Continue working on your assigned goal."
