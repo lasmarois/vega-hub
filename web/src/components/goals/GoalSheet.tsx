@@ -27,10 +27,10 @@ import {
 } from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest } from 'lucide-react'
+import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus } from '@/lib/types'
-import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog, CreateMRDialog } from './GoalActions'
+import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog, CreateMRDialog, RecreateWorktreeDialog } from './GoalActions'
 import { ChatThread } from './ChatThread'
 
 interface GoalSheetProps {
@@ -55,6 +55,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
   const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false)
   const [resumeDialogOpen, setResumeDialogOpen] = useState(false)
   const [createMRDialogOpen, setCreateMRDialogOpen] = useState(false)
+  const [recreateWorktreeDialogOpen, setRecreateWorktreeDialogOpen] = useState(false)
 
   const handleAnswer = async (questionId: string, answer: string) => {
     if (!answer?.trim()) return
@@ -355,6 +356,38 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                 <p className="mt-0.5 text-yellow-600">
                   {goal.workspace_error || 'Project workspace is not set up. Actions are unavailable.'}
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* Worktree Missing Warning */}
+          {goal.worktree_status === 'missing' && (
+            <div className={`mt-3 p-3 ${goal.can_recreate ? 'bg-yellow-50 border-yellow-200' : 'bg-red-50 border-red-200'} border rounded-md flex items-start gap-2`}>
+              {goal.can_recreate ? (
+                <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
+              ) : (
+                <XCircle className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
+              )}
+              <div className="flex-1">
+                <div className={`text-sm ${goal.can_recreate ? 'text-yellow-700' : 'text-red-700'}`}>
+                  <strong>Worktree Missing</strong>
+                  <p className={`mt-0.5 ${goal.can_recreate ? 'text-yellow-600' : 'text-red-600'}`}>
+                    {goal.can_recreate 
+                      ? `The worktree directory was deleted, but the branch "${goal.branch_info?.branch}" still exists${goal.branch_status === 'remote_only' ? ' on remote' : ''}.`
+                      : `The worktree and branch "${goal.branch_info?.branch}" no longer exist.`}
+                  </p>
+                </div>
+                {goal.can_recreate && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2 gap-1"
+                    onClick={() => setRecreateWorktreeDialogOpen(true)}
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                    Recreate Worktree
+                  </Button>
+                )}
               </div>
             </div>
           )}
@@ -758,6 +791,15 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
           goalTitle={goal.title}
           baseBranch={goal.branch_info.base_branch}
           lastCommitMessage={goal.branch_info.last_commit_message}
+          onSuccess={onRefresh}
+        />
+      )}
+
+      {goal.worktree_status === 'missing' && (
+        <RecreateWorktreeDialog
+          open={recreateWorktreeDialogOpen}
+          onOpenChange={setRecreateWorktreeDialogOpen}
+          goal={goal}
           onSuccess={onRefresh}
         />
       )}

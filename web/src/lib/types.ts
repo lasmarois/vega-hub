@@ -61,6 +61,9 @@ export interface GoalDetail {
   workspace_status?: 'ready' | 'missing' | 'error'
   workspace_error?: string
   branch_info?: BranchInfo
+  worktree_status?: 'exists' | 'missing' | 'never_created'
+  branch_status?: 'local' | 'remote_only' | 'missing'
+  can_recreate?: boolean
 }
 
 export interface GoalStatus {

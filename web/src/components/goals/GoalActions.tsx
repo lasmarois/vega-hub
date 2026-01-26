@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { AlertTriangle, CheckCircle2, Pause, Trash2, Plus, Play } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Pause, Trash2, Plus, Play, RefreshCw, GitBranch, XCircle } from 'lucide-react'
 import type { GoalDetail, Project } from '@/lib/types'
 
 // Complete Goal Dialog
@@ -860,6 +860,142 @@ export function CreateMRDialog({
                 {loading ? 'Creating...' : 'Create MR/PR'}
               </Button>
             </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// Recreate Worktree Dialog
+interface RecreateWorktreeDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  goal: GoalDetail
+  onSuccess: () => void
+}
+
+export function RecreateWorktreeDialog({
+  open,
+  onOpenChange,
+  goal,
+  onSuccess,
+}: RecreateWorktreeDialogProps) {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const project = goal.projects[0] || ''
+  const branchName = goal.branch_info?.branch || 'unknown'
+  const canRecreate = goal.can_recreate
+  const branchStatus = goal.branch_status
+
+  const handleRecreate = async () => {
+    setLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch(`/api/goals/${goal.id}/recreate-worktree`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project }),
+      })
+
+      const data = await res.json()
+      if (data.success) {
+        onSuccess()
+        onOpenChange(false)
+      } else {
+        setError(data.error || 'Failed to recreate worktree')
+      }
+    } catch (err) {
+      setError('Network error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {canRecreate ? (
+              <>
+                <RefreshCw className="h-5 w-5 text-yellow-500" />
+                Recreate Worktree
+              </>
+            ) : (
+              <>
+                <XCircle className="h-5 w-5 text-red-500" />
+                Branch Not Found
+              </>
+            )}
+          </DialogTitle>
+          <DialogDescription>
+            {canRecreate
+              ? `Recreate the worktree for goal #${goal.id}`
+              : `The branch for goal #${goal.id} no longer exists`}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-4">
+          <div className="text-sm">
+            <strong>Goal:</strong> {goal.title}
+          </div>
+          <div className="text-sm">
+            <strong>Project:</strong> {project}
+          </div>
+
+          {canRecreate ? (
+            <>
+              <div className="text-sm flex items-center gap-2">
+                <GitBranch className="h-4 w-4" />
+                <strong>Branch:</strong>
+                <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{branchName}</code>
+                <span className={`text-xs ${branchStatus === 'local' ? 'text-green-600' : 'text-yellow-600'}`}>
+                  ({branchStatus === 'local' ? 'local' : 'remote only'})
+                </span>
+              </div>
+
+              <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-md text-sm text-yellow-700">
+                <strong>Warning:</strong> If there were uncommitted changes in the previous
+                worktree, they are permanently lost.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="p-3 bg-red-50 border border-red-200 rounded-md text-sm text-red-700">
+                <strong>Branch not found:</strong> The branch{' '}
+                <code className="bg-red-100 px-1 rounded">{branchName}</code> no longer exists
+                locally or on the remote.
+              </div>
+
+              <div className="text-sm text-muted-foreground">
+                <strong>Options:</strong>
+                <ul className="list-disc ml-5 mt-1 space-y-1">
+                  <li>Create a fresh worktree using the Resume action</li>
+                  <li>Keep the goal without a worktree</li>
+                </ul>
+              </div>
+            </>
+          )}
+
+          {error && (
+            <div className="text-sm text-red-500 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              {error}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          {canRecreate && (
+            <Button onClick={handleRecreate} disabled={loading}>
+              {loading ? 'Recreating...' : 'Recreate Worktree'}
+            </Button>
           )}
         </DialogFooter>
       </DialogContent>
