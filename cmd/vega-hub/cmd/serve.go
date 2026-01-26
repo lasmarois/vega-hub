@@ -42,6 +42,28 @@ func init() {
 	serveCmd.Flags().IntVarP(&servePort, "port", "p", 8080, "Port to listen on")
 }
 
+// spaHandler serves static files and falls back to index.html for SPA routes
+func spaHandler(fsys http.FileSystem) http.Handler {
+	fileServer := http.FileServer(fsys)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Try to open the requested file
+		f, err := fsys.Open(path)
+		if err == nil {
+			f.Close()
+			// File exists, serve it
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// File doesn't exist - serve index.html for SPA routing
+		// This allows React Router to handle /goals, /projects, etc.
+		r.URL.Path = "/"
+		fileServer.ServeHTTP(w, r)
+	})
+}
+
 func runServe(cmd *cobra.Command, args []string) {
 	dir := cli.VegaDir
 	if dir == "" {
@@ -79,8 +101,8 @@ func runServe(cmd *cobra.Command, args []string) {
 		if err != nil {
 			log.Printf("Warning: could not load embedded web files: %v", err)
 		} else {
-			fileServer := http.FileServer(http.FS(webContent))
-			mux.Handle("/", fileServer)
+			// SPA handler: serve static files, fallback to index.html for client-side routes
+			mux.Handle("/", spaHandler(http.FS(webContent)))
 		}
 	}
 

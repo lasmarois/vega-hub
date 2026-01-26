@@ -16,6 +16,8 @@ export interface GoalSummary {
   executor_status: 'running' | 'waiting' | 'stopped' | 'idle'
   pending_questions: number
   active_executors: number
+  workspace_status?: 'ready' | 'missing' | 'error'
+  workspace_error?: string
 }
 
 export interface PhaseDetail {
@@ -45,6 +47,8 @@ export interface GoalDetail {
   executor_status: 'running' | 'waiting' | 'stopped' | 'idle'
   pending_questions: Question[]
   active_executors: Executor[]
+  workspace_status?: 'ready' | 'missing' | 'error'
+  workspace_error?: string
 }
 
 export interface GoalStatus {
@@ -83,4 +87,6 @@ export interface Project {
   base_branch: string
   workspace?: string
   upstream?: string
+  workspace_status: 'ready' | 'missing' | 'error'
+  workspace_error?: string
 }

@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Target, ChevronDown, Plus } from 'lucide-react'
+import { Target, ChevronDown, Plus, AlertTriangle } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 import type { GoalSummary, Project } from '@/lib/types'
@@ -255,7 +255,14 @@ function GoalCard({ goal, onClick }: { goal: GoalSummary; onClick: () => void })
         <p className="text-sm mb-2">{goal.title}</p>
         <div className="flex items-center gap-3 text-xs text-muted-foreground mb-2">
           {goal.projects.length > 0 && (
-            <span>{goal.projects.join(', ')}</span>
+            <span className="flex items-center gap-1">
+              {goal.projects.join(', ')}
+              {goal.workspace_status && goal.workspace_status !== 'ready' && (
+                <span title={goal.workspace_error || 'Workspace not configured'}>
+                  <AlertTriangle className="h-3 w-3 text-yellow-500" />
+                </span>
+              )}
+            </span>
           )}
         </div>
         {/* Progress Bar */}

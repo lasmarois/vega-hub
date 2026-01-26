@@ -391,11 +391,13 @@ func (p *Parser) ParseGoalDetail(id string) (*GoalDetail, error) {
 
 // Project represents a managed project from projects/<name>.md
 type Project struct {
-	Name       string `json:"name"`
-	Workspace  string `json:"workspace"`
-	BaseBranch string `json:"base_branch"`
-	Upstream   string `json:"upstream"`    // Git remote URL or local path
-	GitRemote  string `json:"git_remote"`  // Resolved git remote URL (from upstream or repo)
+	Name            string `json:"name"`
+	Workspace       string `json:"workspace"`
+	BaseBranch      string `json:"base_branch"`
+	Upstream        string `json:"upstream"`         // Git remote URL or local path
+	GitRemote       string `json:"git_remote"`       // Resolved git remote URL (from upstream or repo)
+	WorkspaceStatus string `json:"workspace_status"` // "ready", "missing", "error"
+	WorkspaceError  string `json:"workspace_error,omitempty"`
 }
 
 // ParseProject reads and parses a project configuration file
@@ -463,7 +465,35 @@ func (p *Parser) ParseProject(name string) (*Project, error) {
 		}
 	}
 
+	// Check workspace status
+	project.WorkspaceStatus, project.WorkspaceError = checkWorkspaceStatus(p.dir, name)
+
 	return project, nil
+}
+
+// checkWorkspaceStatus checks if a project's workspace is properly set up
+func checkWorkspaceStatus(vegaDir, projectName string) (status, errorMsg string) {
+	worktreeBase := filepath.Join(vegaDir, "workspaces", projectName, "worktree-base")
+
+	// Check if worktree-base directory exists
+	info, err := os.Stat(worktreeBase)
+	if os.IsNotExist(err) {
+		return "missing", "Workspace not set up: workspaces/" + projectName + "/worktree-base/ does not exist"
+	}
+	if err != nil {
+		return "error", "Cannot access workspace: " + err.Error()
+	}
+	if !info.IsDir() {
+		return "error", "Workspace path exists but is not a directory"
+	}
+
+	// Check if it's a valid git repository
+	gitDir := filepath.Join(worktreeBase, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return "error", "Workspace exists but is not a git repository"
+	}
+
+	return "ready", ""
 }
 
 // ParseProject is a standalone function to parse a project config

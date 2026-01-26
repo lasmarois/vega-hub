@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { AlertTriangle, CheckCircle2, Pause, Trash2, Plus } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Pause, Trash2, Plus, Play } from 'lucide-react'
 import type { GoalDetail, Project } from '@/lib/types'
 
 // Complete Goal Dialog
@@ -148,6 +148,7 @@ export function IceGoalDialog({
   onSuccess,
 }: IceGoalDialogProps) {
   const [reason, setReason] = useState('')
+  const [removeWorktree, setRemoveWorktree] = useState(false)
   const [force, setForce] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -171,7 +172,12 @@ export function IceGoalDialog({
       const res = await fetch(`/api/goals/${goal.id}/ice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project, reason: reason.trim(), force }),
+        body: JSON.stringify({
+          project,
+          reason: reason.trim(),
+          remove_worktree: removeWorktree,
+          force: removeWorktree && force,
+        }),
       })
 
       const data = await res.json()
@@ -179,6 +185,8 @@ export function IceGoalDialog({
         onSuccess()
         onOpenChange(false)
         setReason('')
+        setRemoveWorktree(false)
+        setForce(false)
       } else {
         setError(data.error?.message || 'Failed to ice goal')
       }
@@ -198,7 +206,7 @@ export function IceGoalDialog({
             Ice Goal #{goal.id}
           </DialogTitle>
           <DialogDescription>
-            Pause this goal for later. The branch will be preserved.
+            Pause this goal for later. Branch and worktree will be preserved for easy resume.
           </DialogDescription>
         </DialogHeader>
 
@@ -216,15 +224,32 @@ export function IceGoalDialog({
             />
           </div>
 
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={force}
-              onChange={(e) => setForce(e.target.checked)}
-              className="rounded border-gray-300"
-            />
-            Force (ignore uncommitted changes)
-          </label>
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={removeWorktree}
+                onChange={(e) => {
+                  setRemoveWorktree(e.target.checked)
+                  if (!e.target.checked) setForce(false)
+                }}
+                className="rounded border-gray-300"
+              />
+              Remove worktree (frees disk space)
+            </label>
+
+            {removeWorktree && (
+              <label className="flex items-center gap-2 text-sm ml-6 text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={force}
+                  onChange={(e) => setForce(e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                Force (ignore uncommitted changes)
+              </label>
+            )}
+          </div>
 
           {error && (
             <div className="text-sm text-red-500 flex items-center gap-2">
@@ -567,6 +592,101 @@ export function StopExecutorDialog({
           </Button>
           <Button variant="destructive" onClick={handleStop} disabled={loading}>
             {loading ? 'Stopping...' : 'Stop Executor'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// Resume Goal Dialog
+interface ResumeGoalDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  goal: GoalDetail
+  onSuccess: () => void
+}
+
+export function ResumeGoalDialog({
+  open,
+  onOpenChange,
+  goal,
+  onSuccess,
+}: ResumeGoalDialogProps) {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const project = goal.projects[0] || ''
+
+  const handleResume = async () => {
+    if (!project) {
+      setError('No project associated with this goal')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch(`/api/goals/${goal.id}/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project }),
+      })
+
+      const data = await res.json()
+      if (data.success) {
+        onSuccess()
+        onOpenChange(false)
+      } else {
+        setError(data.error?.message || 'Failed to resume goal')
+      }
+    } catch (err) {
+      setError('Network error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Play className="h-5 w-5 text-green-500" />
+            Resume Goal #{goal.id}
+          </DialogTitle>
+          <DialogDescription>
+            Resume this iced goal. The worktree will be recreated if needed.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-4">
+          <div className="text-sm">
+            <strong>Title:</strong> {goal.title}
+          </div>
+          <div className="text-sm">
+            <strong>Project:</strong> {project}
+          </div>
+
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-md text-sm text-blue-700">
+            This will move the goal back to active status and restore the worktree if it was removed during ice.
+          </div>
+
+          {error && (
+            <div className="text-sm text-red-500 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" />
+              {error}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleResume} disabled={loading}>
+            {loading ? 'Resuming...' : 'Resume Goal'}
           </Button>
         </DialogFooter>
       </DialogContent>

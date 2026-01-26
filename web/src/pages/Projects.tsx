@@ -1,13 +1,17 @@
+import { useEffect, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { FolderOpen, Target, Snowflake, CheckCircle2 } from 'lucide-react'
-import type { GoalSummary } from '@/lib/types'
+import { FolderOpen, Target, Snowflake, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react'
+import type { GoalSummary, Project } from '@/lib/types'
 
 export interface ProjectStats {
   name: string
   active: number
   iced: number
   completed: number
+  workspace_status?: 'ready' | 'missing' | 'error'
+  workspace_error?: string
 }
 
 interface ProjectsProps {
@@ -17,7 +21,17 @@ interface ProjectsProps {
 }
 
 export function Projects({ goals, loading, onProjectClick }: ProjectsProps) {
-  // Derive projects from goals
+  const [projectsData, setProjectsData] = useState<Project[]>([])
+
+  // Fetch projects with workspace status
+  useEffect(() => {
+    fetch('/api/projects')
+      .then(res => res.json())
+      .then(data => setProjectsData(data))
+      .catch(() => setProjectsData([]))
+  }, [])
+
+  // Derive project stats from goals and merge with workspace status
   const projectMap = new Map<string, ProjectStats>()
 
   goals.forEach(goal => {
@@ -29,7 +43,32 @@ export function Projects({ goals, loading, onProjectClick }: ProjectsProps) {
       if (goal.status === 'active') stats.active++
       else if (goal.status === 'iced') stats.iced++
       else if (goal.status === 'completed') stats.completed++
+
+      // Use workspace status from goal if not already set
+      if (!stats.workspace_status && goal.workspace_status) {
+        stats.workspace_status = goal.workspace_status
+        stats.workspace_error = goal.workspace_error
+      }
     })
+  })
+
+  // Merge workspace status from projects API (overrides goal-derived status)
+  projectsData.forEach(p => {
+    if (projectMap.has(p.name)) {
+      const stats = projectMap.get(p.name)!
+      stats.workspace_status = p.workspace_status
+      stats.workspace_error = p.workspace_error
+    } else {
+      // Project exists in config but has no goals
+      projectMap.set(p.name, {
+        name: p.name,
+        active: 0,
+        iced: 0,
+        completed: 0,
+        workspace_status: p.workspace_status,
+        workspace_error: p.workspace_error,
+      })
+    }
   })
 
   const projects = Array.from(projectMap.values())
@@ -71,6 +110,32 @@ export function Projects({ goals, loading, onProjectClick }: ProjectsProps) {
                 <div className="flex items-center gap-2">
                   <FolderOpen className="h-5 w-5 text-muted-foreground" />
                   <CardTitle className="text-base">{project.name}</CardTitle>
+                  {/* Workspace Status Badge */}
+                  {project.workspace_status === 'ready' && (
+                    <Badge variant="success" className="ml-auto text-xs">
+                      Ready
+                    </Badge>
+                  )}
+                  {project.workspace_status === 'missing' && (
+                    <Badge
+                      variant="warning"
+                      className="ml-auto text-xs gap-1"
+                      title={project.workspace_error || 'Workspace not configured'}
+                    >
+                      <AlertTriangle className="h-3 w-3" />
+                      Not Set Up
+                    </Badge>
+                  )}
+                  {project.workspace_status === 'error' && (
+                    <Badge
+                      variant="destructive"
+                      className="ml-auto text-xs gap-1"
+                      title={project.workspace_error || 'Workspace error'}
+                    >
+                      <XCircle className="h-3 w-3" />
+                      Error
+                    </Badge>
+                  )}
                 </div>
                 <CardDescription>
                   {project.active + project.iced + project.completed} total goals

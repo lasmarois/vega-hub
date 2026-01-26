@@ -243,9 +243,11 @@ func generateID() string {
 // GoalSummary combines registry goal with runtime status
 type GoalSummary struct {
 	goals.Goal
-	ExecutorStatus   string `json:"executor_status"` // "running", "waiting", "stopped", "none"
+	ExecutorStatus   string `json:"executor_status"`            // "running", "waiting", "stopped", "none"
 	PendingQuestions int    `json:"pending_questions"`
 	ActiveExecutors  int    `json:"active_executors"`
+	WorkspaceStatus  string `json:"workspace_status,omitempty"` // "ready", "missing", "error" (from project)
+	WorkspaceError   string `json:"workspace_error,omitempty"`  // Error message if workspace not ready
 }
 
 // CreateGoalRequest is the request body for POST /api/goals
@@ -264,13 +266,19 @@ type CompleteGoalRequest struct {
 
 // IceGoalRequest is the request body for POST /api/goals/:id/ice
 type IceGoalRequest struct {
-	Project string `json:"project"`
-	Reason  string `json:"reason"`
-	Force   bool   `json:"force,omitempty"`
+	Project        string `json:"project"`
+	Reason         string `json:"reason"`
+	RemoveWorktree bool   `json:"remove_worktree,omitempty"` // If true, remove worktree (default: keep)
+	Force          bool   `json:"force,omitempty"`           // If true, ignore uncommitted changes
 }
 
 // CleanupGoalRequest is the request body for POST /api/goals/:id/cleanup
 type CleanupGoalRequest struct {
+	Project string `json:"project"`
+}
+
+// ResumeGoalRequest is the request body for POST /api/goals/:id/resume
+type ResumeGoalRequest struct {
 	Project string `json:"project"`
 }
 
@@ -318,6 +326,12 @@ func handleGoals(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			questionsByGoal[q.GoalID]++
 		}
 
+		// Cache project workspace status
+		projectStatus := make(map[string]struct {
+			status string
+			error  string
+		})
+
 		// Build summaries
 		summaries := make([]GoalSummary, 0, len(registryGoals))
 		for _, g := range registryGoals {
@@ -338,6 +352,32 @@ func handleGoals(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 				summary.ExecutorStatus = "none"
 			}
 
+			// Get workspace status from first project
+			if len(g.Projects) > 0 {
+				projectName := g.Projects[0]
+				if cached, ok := projectStatus[projectName]; ok {
+					summary.WorkspaceStatus = cached.status
+					summary.WorkspaceError = cached.error
+				} else {
+					// Parse project to get workspace status
+					if proj, err := p.ParseProject(projectName); err == nil {
+						summary.WorkspaceStatus = proj.WorkspaceStatus
+						summary.WorkspaceError = proj.WorkspaceError
+						projectStatus[projectName] = struct {
+							status string
+							error  string
+						}{proj.WorkspaceStatus, proj.WorkspaceError}
+					} else {
+						summary.WorkspaceStatus = "error"
+						summary.WorkspaceError = "Project config not found"
+						projectStatus[projectName] = struct {
+							status string
+							error  string
+						}{"error", "Project config not found"}
+					}
+				}
+			}
+
 			summaries = append(summaries, summary)
 		}
 
@@ -352,6 +392,8 @@ type GoalDetailResponse struct {
 	ExecutorStatus   string          `json:"executor_status"`
 	PendingQuestions []*hub.Question `json:"pending_questions"`
 	ActiveExecutors  []*hub.Executor `json:"active_executors"`
+	WorkspaceStatus  string          `json:"workspace_status,omitempty"` // "ready", "missing", "error"
+	WorkspaceError   string          `json:"workspace_error,omitempty"`  // Error message if not ready
 }
 
 // SpawnRequest is the request body for POST /api/goals/:id/spawn
@@ -395,6 +437,8 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleGoalIce(h, id)(w, r)
 		case "cleanup":
 			handleGoalCleanup(h, id)(w, r)
+		case "resume":
+			handleGoalResume(h, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -450,6 +494,17 @@ func handleGoalDetail(h *hub.Hub, p *goals.Parser, id string) http.HandlerFunc {
 			ExecutorStatus:   status,
 			PendingQuestions: goalQuestions,
 			ActiveExecutors:  goalExecutors,
+		}
+
+		// Get workspace status from first project
+		if len(detail.Projects) > 0 {
+			if proj, err := p.ParseProject(detail.Projects[0]); err == nil {
+				response.WorkspaceStatus = proj.WorkspaceStatus
+				response.WorkspaceError = proj.WorkspaceError
+			} else {
+				response.WorkspaceStatus = "error"
+				response.WorkspaceError = "Project config not found"
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -689,14 +744,15 @@ func handleGoalIce(h *hub.Hub, goalID string) http.HandlerFunc {
 			return
 		}
 
-		log.Printf("[ICE] Icing goal %s in project %s (reason=%q, force=%v)", goalID, req.Project, req.Reason, req.Force)
+		log.Printf("[ICE] Icing goal %s in project %s (reason=%q, remove_worktree=%v, force=%v)", goalID, req.Project, req.Reason, req.RemoveWorktree, req.Force)
 
 		result, data := operations.IceGoal(operations.IceOptions{
-			GoalID:  goalID,
-			Project: req.Project,
-			Reason:  req.Reason,
-			Force:   req.Force,
-			VegaDir: h.Dir(),
+			GoalID:         goalID,
+			Project:        req.Project,
+			Reason:         req.Reason,
+			RemoveWorktree: req.RemoveWorktree,
+			Force:          req.Force,
+			VegaDir:        h.Dir(),
 		})
 
 		w.Header().Set("Content-Type", "application/json")
@@ -775,12 +831,67 @@ func handleGoalCleanup(h *hub.Hub, goalID string) http.HandlerFunc {
 	}
 }
 
+// handleGoalResume handles POST /api/goals/:id/resume - resumes an iced goal
+func handleGoalResume(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		log.Printf("[RESUME] Received resume request for goal %s from %s", goalID, r.RemoteAddr)
+
+		var req ResumeGoalRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if req.Project == "" {
+			http.Error(w, "Project is required", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[RESUME] Resuming goal %s in project %s", goalID, req.Project)
+
+		result, data := operations.ResumeGoal(operations.ResumeOptions{
+			GoalID:  goalID,
+			Project: req.Project,
+			VegaDir: h.Dir(),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		if !result.Success {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(result)
+			return
+		}
+
+		log.Printf("[RESUME] Goal %s resumed successfully", goalID)
+
+		// Emit SSE event for goal resumed
+		h.EmitEvent("goal_resumed", map[string]interface{}{
+			"goal_id":          goalID,
+			"title":            data.Title,
+			"project":          data.Project,
+			"worktree_created": data.WorktreeCreated,
+		})
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    data,
+		})
+	}
+}
+
 // ProjectSummary is a simplified project info for the API
 type ProjectSummary struct {
-	Name       string `json:"name"`
-	BaseBranch string `json:"base_branch"`
-	Workspace  string `json:"workspace,omitempty"`
-	Upstream   string `json:"upstream,omitempty"`
+	Name            string `json:"name"`
+	BaseBranch      string `json:"base_branch"`
+	Workspace       string `json:"workspace,omitempty"`
+	Upstream        string `json:"upstream,omitempty"`
+	WorkspaceStatus string `json:"workspace_status"`          // "ready", "missing", "error"
+	WorkspaceError  string `json:"workspace_error,omitempty"` // Error message if not ready
 }
 
 // handleProjects handles GET /api/projects - lists all projects
@@ -801,10 +912,12 @@ func handleProjects(h *hub.Hub) http.HandlerFunc {
 		summaries := make([]ProjectSummary, 0, len(projects))
 		for _, p := range projects {
 			summaries = append(summaries, ProjectSummary{
-				Name:       p.Name,
-				BaseBranch: p.BaseBranch,
-				Workspace:  p.Workspace,
-				Upstream:   p.Upstream,
+				Name:            p.Name,
+				BaseBranch:      p.BaseBranch,
+				Workspace:       p.Workspace,
+				Upstream:        p.Upstream,
+				WorkspaceStatus: p.WorkspaceStatus,
+				WorkspaceError:  p.WorkspaceError,
 			})
 		}
 

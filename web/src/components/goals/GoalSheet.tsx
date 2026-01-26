@@ -20,10 +20,10 @@ import {
 } from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, AlertCircle, CheckCircle2, Circle, MessageSquare, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2 } from 'lucide-react'
+import { Play, FileText, AlertCircle, CheckCircle2, Circle, MessageSquare, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus, Question } from '@/lib/types'
-import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog } from './GoalActions'
+import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog } from './GoalActions'
 
 interface GoalSheetProps {
   open: boolean
@@ -45,6 +45,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
   const [iceDialogOpen, setIceDialogOpen] = useState(false)
   const [stopDialogOpen, setStopDialogOpen] = useState(false)
   const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false)
+  const [resumeDialogOpen, setResumeDialogOpen] = useState(false)
 
   const handleAnswer = async (questionId: string) => {
     const answer = answerText[questionId]
@@ -206,8 +207,13 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                 ) : (
                   <Button
                     onClick={() => setShowSpawnInput(true)}
-                    disabled={goal.executor_status === 'running' || goal.executor_status === 'waiting'}
+                    disabled={
+                      goal.executor_status === 'running' ||
+                      goal.executor_status === 'waiting' ||
+                      (goal.workspace_status && goal.workspace_status !== 'ready')
+                    }
                     className="gap-2"
+                    title={goal.workspace_status !== 'ready' ? 'Workspace not configured' : undefined}
                   >
                     <Play className="h-4 w-4" />
                     {goal.executor_status === 'running' ? 'Running' :
@@ -221,7 +227,13 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
             {/* Action Menu */}
             <Popover open={actionMenuOpen} onOpenChange={setActionMenuOpen}>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" className="ml-auto">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="ml-auto"
+                  disabled={goal.workspace_status && goal.workspace_status !== 'ready'}
+                  title={goal.workspace_status !== 'ready' ? 'Workspace not configured' : undefined}
+                >
                   <MoreVertical className="h-4 w-4" />
                 </Button>
               </PopoverTrigger>
@@ -287,9 +299,37 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                     Cleanup Branch
                   </Button>
                 )}
+
+                {/* Resume - only for iced goals */}
+                {goal.status === 'iced' && (
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start gap-2 text-green-600"
+                    onClick={() => {
+                      setActionMenuOpen(false)
+                      setResumeDialogOpen(true)
+                    }}
+                  >
+                    <Play className="h-4 w-4" />
+                    Resume Goal
+                  </Button>
+                )}
               </PopoverContent>
             </Popover>
           </div>
+
+          {/* Workspace Status Warning */}
+          {goal.workspace_status && goal.workspace_status !== 'ready' && (
+            <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-md flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
+              <div className="text-sm text-yellow-700">
+                <strong>Workspace not configured</strong>
+                <p className="mt-0.5 text-yellow-600">
+                  {goal.workspace_error || 'Project workspace is not set up. Actions are unavailable.'}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Tabs Content */}
@@ -601,6 +641,13 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
         onOpenChange={setCleanupDialogOpen}
         goalId={goal.id}
         project={goal.projects[0] || ''}
+        onSuccess={onRefresh}
+      />
+
+      <ResumeGoalDialog
+        open={resumeDialogOpen}
+        onOpenChange={setResumeDialogOpen}
+        goal={goal}
         onSuccess={onRefresh}
       />
     </Sheet>

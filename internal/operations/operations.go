@@ -53,21 +53,40 @@ type CompleteResult struct {
 
 // IceOptions contains options for icing a goal
 type IceOptions struct {
-	GoalID  string
-	Project string
-	Reason  string
-	Force   bool
-	VegaDir string
+	GoalID          string
+	Project         string
+	Reason          string
+	RemoveWorktree  bool // If true, remove worktree (default: keep it)
+	Force           bool // If true, ignore uncommitted changes when removing worktree
+	VegaDir         string
 }
 
 // IceResult contains the result of icing a goal
 type IceResult struct {
+	GoalID            string `json:"goal_id"`
+	Title             string `json:"title"`
+	Project           string `json:"project"`
+	Reason            string `json:"reason"`
+	BranchPreserved   string `json:"branch_preserved"`
+	WorktreeRemoved   bool   `json:"worktree_removed"`
+	WorktreePreserved string `json:"worktree_preserved,omitempty"`
+}
+
+// ResumeOptions contains options for resuming an iced goal
+type ResumeOptions struct {
+	GoalID  string
+	Project string
+	VegaDir string
+}
+
+// ResumeResult contains the result of resuming an iced goal
+type ResumeResult struct {
 	GoalID          string `json:"goal_id"`
 	Title           string `json:"title"`
 	Project         string `json:"project"`
-	Reason          string `json:"reason"`
-	BranchPreserved string `json:"branch_preserved"`
-	WorktreeRemoved bool   `json:"worktree_removed"`
+	WorktreeCreated bool   `json:"worktree_created"`
+	WorktreePath    string `json:"worktree_path,omitempty"`
+	WorktreeExisted bool   `json:"worktree_existed"`
 }
 
 // CleanupOptions contains options for cleaning up a goal's branch
@@ -291,8 +310,8 @@ func IceGoal(opts IceOptions) (*Result, *IceResult) {
 	// Get branch name
 	branchName, _ := getWorktreeBranch(worktreeDir)
 
-	// Safety check
-	if !opts.Force {
+	// Safety check - only needed if removing worktree
+	if opts.RemoveWorktree && !opts.Force {
 		if err := checkWorktreeClean(worktreeDir); err != nil {
 			return &Result{
 				Success: false,
@@ -312,9 +331,13 @@ func IceGoal(opts IceOptions) (*Result, *IceResult) {
 		Reason:  opts.Reason,
 	}
 
-	// Step 1: Remove worktree (branch preserved)
-	removeWorktree(projectBase, worktreeDir)
-	result.WorktreeRemoved = true
+	// Step 1: Optionally remove worktree (branch always preserved)
+	if opts.RemoveWorktree {
+		removeWorktree(projectBase, worktreeDir)
+		result.WorktreeRemoved = true
+	} else {
+		result.WorktreePreserved = worktreeDir
+	}
 	result.BranchPreserved = branchName
 
 	// Step 2: Move goal file to iced
@@ -329,6 +352,113 @@ func IceGoal(opts IceOptions) (*Result, *IceResult) {
 	// Step 4: Update registry
 	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
 	iceGoalInRegistry(registryPath, opts.GoalID, opts.Reason)
+
+	return &Result{Success: true}, result
+}
+
+// ResumeGoal resumes an iced goal
+func ResumeGoal(opts ResumeOptions) (*Result, *ResumeResult) {
+	// Validate goal exists and is iced
+	icedFile := filepath.Join(opts.VegaDir, "goals", "iced", opts.GoalID+".md")
+	if _, err := os.Stat(icedFile); os.IsNotExist(err) {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "goal_not_found",
+				Message: fmt.Sprintf("Iced goal '%s' not found", opts.GoalID),
+				Details: map[string]string{"goal_id": opts.GoalID},
+			},
+		}, nil
+	}
+
+	// Get goal title
+	goalTitle := getGoalTitle(icedFile, opts.GoalID)
+
+	// Get project info
+	project, err := goals.ParseProject(opts.VegaDir, opts.Project)
+	if err != nil {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "project_not_found",
+				Message: fmt.Sprintf("Project '%s' not found", opts.Project),
+				Details: map[string]string{"error": err.Error()},
+			},
+		}, nil
+	}
+
+	projectBase := filepath.Join(opts.VegaDir, "workspaces", opts.Project, "worktree-base")
+
+	result := &ResumeResult{
+		GoalID:  opts.GoalID,
+		Title:   goalTitle,
+		Project: opts.Project,
+	}
+
+	// Step 1: Move goal file back to active
+	activeDir := filepath.Join(opts.VegaDir, "goals", "active")
+	os.MkdirAll(activeDir, 0755)
+	activeFile := filepath.Join(activeDir, opts.GoalID+".md")
+	if err := os.Rename(icedFile, activeFile); err != nil {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "file_move_failed",
+				Message: "Could not move goal file to active",
+				Details: map[string]string{"error": err.Error()},
+			},
+		}, nil
+	}
+
+	// Step 2: Update registry
+	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
+	resumeGoalInRegistry(registryPath, opts.GoalID, goalTitle, opts.Project)
+
+	// Step 3: Check if worktree exists, recreate if needed
+	worktreeDir, err := findWorktreeDir(opts.VegaDir, opts.Project, opts.GoalID)
+	if err != nil {
+		// Worktree doesn't exist, need to recreate it
+		// Find the branch
+		branchName, err := findGoalBranch(projectBase, opts.GoalID)
+		if err != nil {
+			return &Result{
+				Success: false,
+				Error: &ErrorInfo{
+					Code:    "branch_not_found",
+					Message: fmt.Sprintf("No branch found for goal '%s'", opts.GoalID),
+					Details: map[string]string{"error": err.Error()},
+				},
+			}, nil
+		}
+
+		// Recreate worktree from existing branch
+		baseBranch := project.BaseBranch
+		if baseBranch == "" {
+			baseBranch = "main"
+		}
+		worktreePath := filepath.Join(opts.VegaDir, "workspaces", opts.Project, branchName)
+
+		if err := recreateWorktree(projectBase, worktreePath, branchName); err != nil {
+			return &Result{
+				Success: false,
+				Error: &ErrorInfo{
+					Code:    "worktree_create_failed",
+					Message: "Could not recreate worktree",
+					Details: map[string]string{"error": err.Error()},
+				},
+			}, nil
+		}
+
+		result.WorktreeCreated = true
+		result.WorktreePath = worktreePath
+
+		// Copy hooks to worktree
+		copyHooksToWorktree(opts.VegaDir, worktreePath)
+	} else {
+		// Worktree already exists
+		result.WorktreeExisted = true
+		result.WorktreePath = worktreeDir
+	}
 
 	return &Result{Success: true}, result
 }
@@ -884,11 +1014,47 @@ func iceGoalInRegistry(registryPath, goalID, reason string) error {
 		return err
 	}
 
-	// Update status from Active to Iced
-	activePattern := regexp.MustCompile(fmt.Sprintf(`(\| %s \|[^|]*\|[^|]*\|) Active (\|[^|]*\|)`, regexp.QuoteMeta(goalID)))
-	newContent := activePattern.ReplaceAllString(string(content), fmt.Sprintf("$1 Iced $2 %s", reason))
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+	var goalTitle, goalProject string
+	addedToIced := false
 
-	return os.WriteFile(registryPath, []byte(newContent), 0644)
+	// First pass: remove from Active Goals and capture details
+	activePattern := regexp.MustCompile(fmt.Sprintf(`^\| %s \|([^|]*)\|([^|]*)\| Active`, regexp.QuoteMeta(goalID)))
+	for _, line := range lines {
+		if matches := activePattern.FindStringSubmatch(line); matches != nil {
+			goalTitle = strings.TrimSpace(matches[1])
+			goalProject = strings.TrimSpace(matches[2])
+			continue // Skip this line (remove from active)
+		}
+		newLines = append(newLines, line)
+	}
+
+	// Second pass: add to Iced Goals section
+	var finalLines []string
+	for i, line := range newLines {
+		finalLines = append(finalLines, line)
+
+		// Add after Iced Goals table header
+		if !addedToIced && strings.Contains(line, "| ID | Title | Project(s) | Reason |") {
+			// Check if next line is separator
+			if i+1 < len(newLines) && strings.Contains(newLines[i+1], "|---") {
+				finalLines = append(finalLines, newLines[i+1])
+				// Add the iced goal row
+				icedRow := fmt.Sprintf("| %s | %s | %s | %s |", goalID, goalTitle, goalProject, reason)
+				finalLines = append(finalLines, icedRow)
+				addedToIced = true
+				// Skip the separator in the next iteration
+				newLines = append(newLines[:i+1], newLines[i+2:]...)
+			}
+		}
+	}
+
+	if !addedToIced {
+		finalLines = newLines
+	}
+
+	return os.WriteFile(registryPath, []byte(strings.Join(finalLines, "\n")), 0644)
 }
 
 func updateGoalStatus(goalFile, status, reason string) error {
@@ -913,4 +1079,72 @@ func updateGoalStatus(goalFile, status, reason string) error {
 	newLines = append(newLines, fmt.Sprintf("Updated: %s", time.Now().Format("2006-01-02")))
 
 	return os.WriteFile(goalFile, []byte(strings.Join(newLines, "\n")), 0644)
+}
+
+func recreateWorktree(projectBase, worktreePath, branchName string) error {
+	// Calculate relative path from projectBase to worktreePath
+	relPath, err := filepath.Rel(projectBase, worktreePath)
+	if err != nil {
+		relPath = worktreePath
+	}
+	// Use existing branch (don't create new one)
+	cmd := exec.Command("git", "-C", projectBase, "worktree", "add", relPath, branchName)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git worktree add: %s", string(output))
+	}
+	return nil
+}
+
+func resumeGoalInRegistry(registryPath, goalID, goalTitle, project string) error {
+	content, err := os.ReadFile(registryPath)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+	addedToActive := false
+
+	// First pass: remove from Iced Goals section
+	icedPattern := regexp.MustCompile(fmt.Sprintf(`^\| %s \|`, regexp.QuoteMeta(goalID)))
+	inIcedSection := false
+	for _, line := range lines {
+		if strings.Contains(line, "## Iced Goals") {
+			inIcedSection = true
+		} else if strings.HasPrefix(line, "## ") {
+			inIcedSection = false
+		}
+
+		// Skip the goal row if we're in the Iced section
+		if inIcedSection && icedPattern.MatchString(line) {
+			continue
+		}
+		newLines = append(newLines, line)
+	}
+
+	// Second pass: add to Active Goals section
+	var finalLines []string
+	for i, line := range newLines {
+		finalLines = append(finalLines, line)
+
+		// Add after Active Goals table header
+		if !addedToActive && strings.Contains(line, "| ID | Title | Project(s) | Status | Phase |") {
+			// Check if next line is separator
+			if i+1 < len(newLines) && strings.Contains(newLines[i+1], "|---") {
+				finalLines = append(finalLines, newLines[i+1])
+				// Add the active goal row
+				activeRow := fmt.Sprintf("| %s | %s | %s | Active | 1/? |", goalID, goalTitle, project)
+				finalLines = append(finalLines, activeRow)
+				addedToActive = true
+				// Skip the separator in the next iteration
+				newLines = append(newLines[:i+1], newLines[i+2:]...)
+			}
+		}
+	}
+
+	if !addedToActive {
+		finalLines = newLines
+	}
+
+	return os.WriteFile(registryPath, []byte(strings.Join(finalLines, "\n")), 0644)
 }
