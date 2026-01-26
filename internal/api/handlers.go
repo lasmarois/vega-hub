@@ -2074,6 +2074,10 @@ func handleRecreateWorktree(h *hub.Hub, p *goals.Parser, goalID string) http.Han
 			relPath = worktreePath
 		}
 
+		// Prune stale worktree references (handles manually deleted directories)
+		pruneCmd := exec.Command("git", "-C", projectBase, "worktree", "prune")
+		pruneCmd.Run() // Ignore errors, prune is best-effort
+
 		// Create worktree from existing branch
 		cmd := exec.Command("git", "-C", projectBase, "worktree", "add", relPath, branchName)
 		if output, err := cmd.CombinedOutput(); err != nil {
