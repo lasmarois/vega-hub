@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -401,6 +404,18 @@ func handleGoals(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 	}
 }
 
+// BranchInfo contains git branch information for a goal's worktree
+type BranchInfo struct {
+	Branch           string `json:"branch"`
+	BaseBranch       string `json:"base_branch"`
+	Ahead            int    `json:"ahead"`
+	Behind           int    `json:"behind"`
+	UncommittedFiles int    `json:"uncommitted_files"`
+	LastCommit       string `json:"last_commit,omitempty"`
+	LastCommitMsg    string `json:"last_commit_message,omitempty"`
+	WorktreePath     string `json:"worktree_path,omitempty"`
+}
+
 // GoalDetailResponse combines goal detail with Q&A history
 type GoalDetailResponse struct {
 	*goals.GoalDetail
@@ -409,6 +424,7 @@ type GoalDetailResponse struct {
 	ActiveExecutors  []*hub.Executor `json:"active_executors"`
 	WorkspaceStatus  string          `json:"workspace_status,omitempty"` // "ready", "missing", "error"
 	WorkspaceError   string          `json:"workspace_error,omitempty"`  // Error message if not ready
+	BranchInfo       *BranchInfo     `json:"branch_info,omitempty"`      // Git branch info for worktree
 }
 
 // SpawnRequest is the request body for POST /api/goals/:id/spawn
@@ -539,6 +555,11 @@ func handleGoalDetail(h *hub.Hub, p *goals.Parser, id string) http.HandlerFunc {
 				response.WorkspaceStatus = "error"
 				response.WorkspaceError = "Project config not found"
 			}
+		}
+
+		// Get branch info for active goals with worktrees
+		if detail.Status == "active" && len(detail.Projects) > 0 {
+			response.BranchInfo = getBranchInfo(p.Dir(), id, detail.Projects)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1454,4 +1475,134 @@ func handleGetCredentials(p *goals.Parser, project string) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(result)
 	}
+}
+
+// getBranchInfo returns git branch information for a goal's worktree
+func getBranchInfo(vegaDir, goalID string, projects []string) *BranchInfo {
+	if len(projects) == 0 {
+		return nil
+	}
+
+	// Find worktree for this goal
+	worktreePath, project := findWorktreeForGoal(vegaDir, goalID, projects)
+	if worktreePath == "" {
+		return nil
+	}
+
+	info := &BranchInfo{
+		WorktreePath: worktreePath,
+	}
+
+	// Get current branch
+	info.Branch = getCurrentBranch(worktreePath)
+
+	// Get base branch from project config
+	projectConfigPath := filepath.Join(vegaDir, "projects", project+".md")
+	if content, err := os.ReadFile(projectConfigPath); err == nil {
+		for _, line := range strings.Split(string(content), "\n") {
+			if strings.HasPrefix(line, "Base Branch:") {
+				info.BaseBranch = strings.TrimSpace(strings.TrimPrefix(line, "Base Branch:"))
+				break
+			}
+		}
+	}
+	if info.BaseBranch == "" {
+		info.BaseBranch = "main"
+	}
+
+	// Get ahead/behind counts
+	info.Ahead, info.Behind = getAheadBehind(worktreePath, info.BaseBranch)
+
+	// Count uncommitted files
+	info.UncommittedFiles = countUncommittedFiles(worktreePath)
+
+	// Get last commit
+	info.LastCommit, info.LastCommitMsg = getLastCommit(worktreePath)
+
+	return info
+}
+
+// findWorktreeForGoal searches for a worktree matching the goal ID
+func findWorktreeForGoal(vegaDir, goalID string, projects []string) (string, string) {
+	workspacesDir := filepath.Join(vegaDir, "workspaces")
+	goalPrefix := fmt.Sprintf("goal-%s-", goalID)
+
+	// Check each project
+	for _, project := range projects {
+		projectPath := filepath.Join(workspacesDir, project)
+		entries, err := os.ReadDir(projectPath)
+		if err != nil {
+			continue
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() && strings.HasPrefix(entry.Name(), goalPrefix) {
+				return filepath.Join(projectPath, entry.Name()), project
+			}
+		}
+	}
+
+	return "", ""
+}
+
+// getCurrentBranch returns the current branch name
+func getCurrentBranch(repoPath string) string {
+	cmd := exec.Command("git", "-C", repoPath, "branch", "--show-current")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// getAheadBehind returns ahead and behind counts relative to base branch
+func getAheadBehind(repoPath, baseBranch string) (int, int) {
+	// Try with origin/ prefix first
+	cmd := exec.Command("git", "-C", repoPath, "rev-list", "--left-right", "--count", baseBranch+"...HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, 0
+	}
+
+	parts := strings.Fields(strings.TrimSpace(string(output)))
+	if len(parts) != 2 {
+		return 0, 0
+	}
+
+	behind := 0
+	ahead := 0
+	fmt.Sscanf(parts[0], "%d", &behind)
+	fmt.Sscanf(parts[1], "%d", &ahead)
+
+	return ahead, behind
+}
+
+// countUncommittedFiles returns the number of uncommitted files
+func countUncommittedFiles(repoPath string) int {
+	cmd := exec.Command("git", "-C", repoPath, "status", "--porcelain")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return 0
+	}
+	return len(lines)
+}
+
+// getLastCommit returns the last commit hash and message
+func getLastCommit(repoPath string) (string, string) {
+	cmd := exec.Command("git", "-C", repoPath, "log", "-1", "--format=%H|%s")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", ""
+	}
+
+	parts := strings.SplitN(strings.TrimSpace(string(output)), "|", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", ""
 }

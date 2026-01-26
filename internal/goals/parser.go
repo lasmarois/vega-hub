@@ -30,6 +30,11 @@ func NewParser(dir string) *Parser {
 	return &Parser{dir: dir}
 }
 
+// Dir returns the vega-missile directory path
+func (p *Parser) Dir() string {
+	return p.dir
+}
+
 // ParseRegistry reads and parses the REGISTRY.md file
 func (p *Parser) ParseRegistry() ([]Goal, error) {
 	registryPath := filepath.Join(p.dir, "goals", "REGISTRY.md")
