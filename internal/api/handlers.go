@@ -513,6 +513,8 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleCreateMR(h, p, id)(w, r)
 		case "recreate-worktree":
 			handleRecreateWorktree(h, p, id)(w, r)
+		case "create-worktree":
+			handleCreateWorktree(h, p, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -2098,6 +2100,169 @@ func handleRecreateWorktree(h *hub.Hub, p *goals.Parser, goalID string) http.Han
 
 		// Emit SSE event
 		h.EmitEvent("worktree_recreated", map[string]interface{}{
+			"goal_id":       goalID,
+			"worktree_path": worktreePath,
+			"branch":        branchName,
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+			Success:      true,
+			WorktreePath: worktreePath,
+			Branch:       branchName,
+		})
+	}
+}
+
+// handleCreateWorktree handles POST /api/goals/:id/create-worktree
+// Creates a new worktree for a goal that doesn't have one yet
+func handleCreateWorktree(h *hub.Hub, p *goals.Parser, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		log.Printf("[CREATE-WORKTREE] Received request for goal %s from %s", goalID, r.RemoteAddr)
+
+		// Get goal detail
+		detail, err := p.ParseGoalDetail(goalID)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   "Goal not found: " + err.Error(),
+			})
+			return
+		}
+
+		// Check if goal already has worktree metadata
+		if detail.Worktree != nil && detail.Worktree.Branch != "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   "Goal already has a worktree. Use recreate-worktree instead.",
+			})
+			return
+		}
+
+		// Determine project
+		project := ""
+		if len(detail.Projects) > 0 {
+			project = detail.Projects[0]
+		}
+		if project == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   "Goal has no projects assigned",
+			})
+			return
+		}
+
+		// Get project base path
+		projectBase := filepath.Join(p.Dir(), "workspaces", project, "worktree-base")
+
+		// Verify projectBase exists
+		if _, err := os.Stat(projectBase); os.IsNotExist(err) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   "Project workspace not found: " + project,
+			})
+			return
+		}
+
+		// Generate branch name and worktree path
+		slug := strings.ToLower(strings.ReplaceAll(detail.Title, " ", "-"))
+		slug = strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				return r
+			}
+			return -1
+		}, slug)
+		if len(slug) > 40 {
+			slug = slug[:40]
+		}
+		branchName := fmt.Sprintf("goal-%s-%s", goalID, slug)
+		worktreePath := filepath.Join(p.Dir(), "workspaces", project, branchName)
+
+		// Check if worktree path already exists
+		if _, err := os.Stat(worktreePath); err == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   "Worktree path already exists: " + worktreePath,
+			})
+			return
+		}
+
+		// Get base branch from project config
+		baseBranch := "main"
+		projectConfigPath := filepath.Join(p.Dir(), "projects", project+".md")
+		if content, err := os.ReadFile(projectConfigPath); err == nil {
+			for _, line := range strings.Split(string(content), "\n") {
+				if strings.Contains(strings.ToLower(line), "base branch") {
+					if idx := strings.Index(line, ":"); idx != -1 {
+						value := strings.TrimSpace(line[idx+1:])
+						value = strings.Trim(value, "*`")
+						if value != "" {
+							baseBranch = value
+						}
+					}
+					break
+				}
+			}
+		}
+
+		// Calculate relative path for git worktree add
+		relPath, err := filepath.Rel(projectBase, worktreePath)
+		if err != nil {
+			relPath = worktreePath
+		}
+
+		// Create new branch and worktree
+		cmd := exec.Command("git", "-C", projectBase, "worktree", "add", "-b", branchName, relPath, baseBranch)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("[CREATE-WORKTREE] Failed: %s", string(output))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(RecreateWorktreeResponse{
+				Success: false,
+				Error:   fmt.Sprintf("Failed to create worktree: %s", strings.TrimSpace(string(output))),
+			})
+			return
+		}
+
+		// Write worktree metadata to goal file
+		goalFilePath := filepath.Join(p.Dir(), "goals", "active", goalID+".md")
+		worktreeSection := fmt.Sprintf("\n## Worktree\n- **Branch**: %s\n- **Project**: %s\n- **Path**: workspaces/%s/%s\n- **Base Branch**: %s\n- **Created**: %s\n",
+			branchName, project, project, branchName, baseBranch, time.Now().Format("2006-01-02"))
+
+		// Read existing content and insert before Status section
+		content, err := os.ReadFile(goalFilePath)
+		if err == nil {
+			contentStr := string(content)
+			if idx := strings.Index(contentStr, "## Status"); idx != -1 {
+				contentStr = contentStr[:idx] + worktreeSection + "\n" + contentStr[idx:]
+			} else {
+				contentStr += worktreeSection
+			}
+			os.WriteFile(goalFilePath, []byte(contentStr), 0644)
+		}
+
+		// Copy hooks to the new worktree
+		copyHooksToWorktree(p.Dir(), worktreePath)
+
+		log.Printf("[CREATE-WORKTREE] Successfully created worktree for goal %s at %s", goalID, worktreePath)
+
+		// Emit SSE event
+		h.EmitEvent("worktree_created", map[string]interface{}{
 			"goal_id":       goalID,
 			"worktree_path": worktreePath,
 			"branch":        branchName,

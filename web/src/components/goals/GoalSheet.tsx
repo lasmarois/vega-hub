@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle } from 'lucide-react'
+import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus } from '@/lib/types'
 import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog, CreateMRDialog, RecreateWorktreeDialog } from './GoalActions'
@@ -356,6 +356,39 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                 <p className="mt-0.5 text-yellow-600">
                   {goal.workspace_error || 'Project workspace is not set up. Actions are unavailable.'}
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* No Worktree Info */}
+          {goal.worktree_status === 'never_created' && (
+            <div className="mt-3 p-3 bg-blue-50 border-blue-200 border rounded-md flex items-start gap-2">
+              <Info className="h-4 w-4 text-blue-600 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <div className="text-sm text-blue-700">
+                  <strong>No Worktree</strong>
+                  <p className="mt-0.5 text-blue-600">
+                    This goal doesn't have a worktree yet. Create one to start working on a dedicated branch.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 gap-1"
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`/api/goals/${goal.id}/create-worktree`, { method: 'POST' })
+                      if (res.ok) {
+                        onRefresh?.()
+                      }
+                    } catch (e) {
+                      console.error('Failed to create worktree:', e)
+                    }
+                  }}
+                >
+                  <GitBranch className="h-3 w-3" />
+                  Create Worktree
+                </Button>
               </div>
             </div>
           )}
