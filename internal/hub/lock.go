@@ -71,11 +71,12 @@ func (l *LockInfo) IsStale() bool {
 	return false
 }
 
-// Lock represents a file-based lock
+// Lock represents a file-based lock using OS-level flock
 type Lock struct {
 	path       string
 	info       *LockInfo
 	acquired   bool
+	file       *os.File // Keep file open while holding the lock (for flock)
 }
 
 // LockManager handles lock acquisition and release
@@ -314,38 +315,64 @@ func (m *LockManager) CleanStaleLocks() (int, error) {
 
 // Lock methods
 
-// tryAcquire attempts to create the lock file atomically
+// tryAcquire attempts to acquire an exclusive lock using OS-level flock
 func (l *Lock) tryAcquire() error {
+	// Open or create the lock file
+	file, err := os.OpenFile(l.path, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return fmt.Errorf("opening lock file: %w", err)
+	}
+
+	// Try to acquire exclusive lock (non-blocking)
+	// LOCK_EX = exclusive lock, LOCK_NB = non-blocking (return immediately if can't lock)
+	err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err != nil {
+		file.Close()
+		// Return os.ErrExist to match expected behavior for "lock held" case
+		if err == syscall.EWOULDBLOCK {
+			return os.ErrExist
+		}
+		return fmt.Errorf("flock: %w", err)
+	}
+
+	// We have the lock - write our lock info
+	// Truncate file first in case there's old content
+	if err := file.Truncate(0); err != nil {
+		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		file.Close()
+		return fmt.Errorf("truncating lock file: %w", err)
+	}
+
+	if _, err := file.Seek(0, 0); err != nil {
+		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		file.Close()
+		return fmt.Errorf("seeking lock file: %w", err)
+	}
+
 	data, err := json.MarshalIndent(l.info, "", "  ")
 	if err != nil {
+		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		file.Close()
 		return fmt.Errorf("marshaling lock info: %w", err)
 	}
 
-	// Use O_EXCL for atomic creation (fails if file exists)
-	file, err := os.OpenFile(l.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
 	if _, err := file.Write(data); err != nil {
-		// Clean up on write failure
-		os.Remove(l.path)
+		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		file.Close()
 		return fmt.Errorf("writing lock file: %w", err)
 	}
 
+	// Keep the file open - this maintains the flock
+	l.file = file
 	l.acquired = true
 	return nil
 }
 
 // steal takes over a stale lock
+// With flock, we just try to acquire - if the process is truly dead, flock was released
 func (l *Lock) steal(existingLock *LockInfo) error {
-	// Remove the stale lock
-	if err := os.Remove(l.path); err != nil {
-		return fmt.Errorf("removing stale lock: %w", err)
-	}
-
-	// Try to acquire again
+	// With flock, dead processes automatically release their locks
+	// So we can just try to acquire again - no need to delete the file
 	return l.tryAcquire()
 }
 
@@ -356,7 +383,20 @@ func (l *Lock) Release() error {
 	}
 
 	l.acquired = false
-	return os.Remove(l.path)
+
+	// Release the flock and close the file
+	if l.file != nil {
+		// Unlock first
+		syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+		// Close the file (also releases lock, but explicit unlock is cleaner)
+		l.file.Close()
+		l.file = nil
+	}
+
+	// Remove the lock file for cleanliness
+	// Ignore errors - file might already be gone
+	os.Remove(l.path)
+	return nil
 }
 
 // Info returns the lock's metadata

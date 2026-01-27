@@ -457,6 +457,55 @@ func TestLockInfo_IsStale(t *testing.T) {
 	}
 }
 
+func TestLockManager_HighConcurrencyStress(t *testing.T) {
+	// This test verifies that flock-based locking works correctly
+	// under high concurrency (the original issue was 5+ simultaneous operations)
+	dir := t.TempDir()
+	lm := NewLockManager(dir)
+
+	const numGoroutines = 20
+	const iterations = 5
+	var wg sync.WaitGroup
+	var successfulLocks int32
+	var counter int32
+
+	// All goroutines will try to increment the same counter
+	// If locking works correctly, final counter should equal successful locks
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			for j := 0; j < iterations; j++ {
+				lock, err := lm.Acquire(LockRegistry, "registry", "", "", "", 10*time.Second)
+				if err != nil {
+					t.Errorf("Goroutine %d failed to acquire lock: %v", id, err)
+					continue
+				}
+
+				// Critical section - increment counter
+				atomic.AddInt32(&successfulLocks, 1)
+				current := atomic.LoadInt32(&counter)
+				// Small delay to increase chance of race if locking is broken
+				time.Sleep(time.Millisecond)
+				atomic.StoreInt32(&counter, current+1)
+
+				lock.Release()
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	expected := int32(numGoroutines * iterations)
+	if counter != expected {
+		t.Errorf("Counter mismatch: expected %d, got %d (indicates race condition)", expected, counter)
+	}
+	if successfulLocks != expected {
+		t.Errorf("Successful locks: expected %d, got %d", expected, successfulLocks)
+	}
+}
+
 func TestSanitizeResource(t *testing.T) {
 	tests := []struct {
 		input    string
