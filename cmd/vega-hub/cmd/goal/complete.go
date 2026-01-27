@@ -12,6 +12,7 @@ import (
 
 	"github.com/lasmarois/vega-hub/internal/cli"
 	"github.com/lasmarois/vega-hub/internal/goals"
+	"github.com/lasmarois/vega-hub/internal/hub"
 	"github.com/spf13/cobra"
 )
 
@@ -170,6 +171,39 @@ func runComplete(c *cobra.Command, args []string) {
 
 	// Step 1: Merge branch (unless --no-merge)
 	if !completeNoMerge {
+		// Acquire merge lock
+		lockManager := hub.NewLockManager(vegaDir)
+		mergeLock, err := lockManager.AcquireMerge(project, "goal-complete-"+goalID)
+		if err != nil {
+			cli.OutputError(cli.ExitStateError, "lock_failed",
+				"Failed to acquire merge lock",
+				map[string]string{
+					"project": project,
+					"error":   err.Error(),
+				},
+				[]cli.ErrorOption{
+					{Action: "check", Description: "Run 'vega-hub lock list' to see active locks"},
+					{Action: "release", Description: "Run 'vega-hub lock release --resource <name> --type merge --force' if lock is stale"},
+				})
+		}
+		defer mergeLock.Release()
+
+		// Also acquire worktree-base lock since we're modifying it
+		worktreeLock, err := lockManager.AcquireWorktreeBase(project, "goal-complete-"+goalID)
+		if err != nil {
+			cli.OutputError(cli.ExitStateError, "lock_failed",
+				"Failed to acquire worktree-base lock",
+				map[string]string{
+					"project": project,
+					"error":   err.Error(),
+				},
+				[]cli.ErrorOption{
+					{Action: "check", Description: "Run 'vega-hub lock list' to see active locks"},
+					{Action: "release", Description: "Run 'vega-hub lock release --resource <name> --type worktree-base --force' if lock is stale"},
+				})
+		}
+		defer worktreeLock.Release()
+
 		// Transition to pushing state
 		if err := sm.Transition(goalID, goals.StatePushing, "Starting completion", map[string]string{
 			"branch":      branchName,

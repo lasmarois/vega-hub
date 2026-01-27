@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/lasmarois/vega-hub/internal/cli"
 	"github.com/lasmarois/vega-hub/internal/goals"
+	"github.com/lasmarois/vega-hub/internal/hub"
 	"github.com/spf13/cobra"
 )
 
@@ -191,6 +192,49 @@ func runCreate(c *cobra.Command, args []string) {
 				map[string]string{"error": err.Error()},
 				nil)
 		}
+
+		// Acquire locks for branch creation (worktree-base + branch)
+		lockManager := hub.NewLockManager(vegaDir)
+		
+		// Lock worktree-base for branch creation
+		worktreeLock, err := lockManager.AcquireWorktreeBase(project, "goal-create-"+goalID)
+		if err != nil {
+			stateManager.Transition(goalID, goals.StateFailed, "Failed to acquire worktree lock", map[string]string{
+				"error": err.Error(),
+			})
+			doRollback()
+			cli.OutputError(cli.ExitStateError, "lock_failed",
+				"Failed to acquire worktree lock",
+				map[string]string{
+					"project": project,
+					"error":   err.Error(),
+				},
+				[]cli.ErrorOption{
+					{Action: "check", Description: "Run 'vega-hub lock list' to see active locks"},
+					{Action: "release", Description: "Run 'vega-hub lock release --resource <name> --type worktree-base --force' if lock is stale"},
+				})
+		}
+		defer worktreeLock.Release()
+
+		// Also lock branch creation for this specific goal
+		branchLock, err := lockManager.AcquireBranch(project, goalID, "goal-create-"+goalID)
+		if err != nil {
+			stateManager.Transition(goalID, goals.StateFailed, "Failed to acquire branch lock", map[string]string{
+				"error": err.Error(),
+			})
+			doRollback()
+			cli.OutputError(cli.ExitStateError, "lock_failed",
+				"Failed to acquire branch lock",
+				map[string]string{
+					"project": project,
+					"goal_id": goalID,
+					"error":   err.Error(),
+				},
+				[]cli.ErrorOption{
+					{Action: "check", Description: "Run 'vega-hub lock list' to see active locks"},
+				})
+		}
+		defer branchLock.Release()
 
 		worktreePath = filepath.Join(vegaDir, "workspaces", project, fmt.Sprintf("goal-%s-%s", goalID, slug))
 		if err := createWorktree(projectBase, worktreePath, goalBranch, baseBranch); err != nil {
