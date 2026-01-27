@@ -27,6 +27,9 @@ const (
 
 	// LockProject protects project-level operations
 	LockProject LockType = "project"
+
+	// LockRegistry protects REGISTRY.md updates
+	LockRegistry LockType = "registry"
 )
 
 // Default lock settings
@@ -36,6 +39,7 @@ const (
 	BranchLockTimeout       = 10 * time.Second
 	MergeLockTimeout        = 60 * time.Second
 	GoalStateLockTimeout    = 5 * time.Second
+	RegistryLockTimeout     = 5 * time.Second
 	StaleThreshold          = 15 * time.Minute // Consider lock stale after this duration
 	LockAcquireRetryDelay   = 100 * time.Millisecond
 )
@@ -119,6 +123,11 @@ func (m *LockManager) AcquireMerge(project, owner string) (*Lock, error) {
 // AcquireGoalState acquires a lock for goal state transitions
 func (m *LockManager) AcquireGoalState(goalID, owner string) (*Lock, error) {
 	return m.acquire(LockGoalState, goalID, goalID, "", owner, GoalStateLockTimeout)
+}
+
+// AcquireRegistry acquires a lock for REGISTRY.md updates
+func (m *LockManager) AcquireRegistry(owner string) (*Lock, error) {
+	return m.acquire(LockRegistry, "registry", "", "", owner, RegistryLockTimeout)
 }
 
 // Acquire acquires a lock with custom timeout
@@ -447,6 +456,17 @@ func (m *LockManager) WithWorktreeBaseLock(project, owner string, fn func() erro
 // WithMergeLock is a convenience wrapper for merge operations
 func (m *LockManager) WithMergeLock(project, owner string, fn func() error) error {
 	lock, err := m.AcquireMerge(project, owner)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
+	return fn()
+}
+
+// WithRegistryLock is a convenience wrapper for REGISTRY.md updates
+func (m *LockManager) WithRegistryLock(owner string, fn func() error) error {
+	lock, err := m.AcquireRegistry(owner)
 	if err != nil {
 		return err
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lasmarois/vega-hub/internal/goals"
+	"github.com/lasmarois/vega-hub/internal/hub"
 )
 
 // Result is the standard result format for operations
@@ -252,9 +253,12 @@ func CompleteGoal(opts CompleteOptions) (*Result, *CompleteResult) {
 		result.HistoryFile = historyFile
 	}
 
-	// Step 5: Update registry
+	// Step 5: Update registry (with lock to prevent race conditions)
 	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
-	completeGoalInRegistry(registryPath, opts.GoalID, goalTitle, opts.Project)
+	lockMgr := hub.NewLockManager(opts.VegaDir)
+	lockMgr.WithRegistryLock("complete-goal", func() error {
+		return completeGoalInRegistry(registryPath, opts.GoalID, goalTitle, opts.Project)
+	})
 
 	// Step 6: Update project config
 	projectConfig := filepath.Join(opts.VegaDir, "projects", opts.Project+".md")
@@ -349,9 +353,12 @@ func IceGoal(opts IceOptions) (*Result, *IceResult) {
 	// Step 3: Update goal file with iced status
 	updateGoalStatus(icedFile, "iced", opts.Reason)
 
-	// Step 4: Update registry
+	// Step 4: Update registry (with lock to prevent race conditions)
 	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
-	iceGoalInRegistry(registryPath, opts.GoalID, opts.Reason)
+	lockMgr := hub.NewLockManager(opts.VegaDir)
+	lockMgr.WithRegistryLock("ice-goal", func() error {
+		return iceGoalInRegistry(registryPath, opts.GoalID, opts.Reason)
+	})
 
 	return &Result{Success: true}, result
 }
@@ -410,9 +417,12 @@ func ResumeGoal(opts ResumeOptions) (*Result, *ResumeResult) {
 		}, nil
 	}
 
-	// Step 2: Update registry
+	// Step 2: Update registry (with lock to prevent race conditions)
 	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
-	resumeGoalInRegistry(registryPath, opts.GoalID, goalTitle, opts.Project)
+	lockMgr := hub.NewLockManager(opts.VegaDir)
+	lockMgr.WithRegistryLock("resume-goal", func() error {
+		return resumeGoalInRegistry(registryPath, opts.GoalID, goalTitle, opts.Project)
+	})
 
 	// Step 3: Check if worktree exists, recreate if needed
 	worktreeDir, err := findWorktreeDir(opts.VegaDir, opts.Project, opts.GoalID)
@@ -594,9 +604,21 @@ func CreateGoal(opts CreateOptions) (*Result, *CreateResult) {
 		}, nil
 	}
 
-	// Update registry
+	// Update registry (with lock to prevent race conditions)
 	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
-	addGoalToRegistry(registryPath, goalID, opts.Title, opts.Project)
+	lockMgr := hub.NewLockManager(opts.VegaDir)
+	if err := lockMgr.WithRegistryLock("create-goal", func() error {
+		return addGoalToRegistry(registryPath, goalID, opts.Title, opts.Project)
+	}); err != nil {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "registry_update_failed",
+				Message: "Could not update registry",
+				Details: map[string]string{"error": err.Error()},
+			},
+		}, nil
+	}
 
 	result := &CreateResult{
 		GoalID:     goalID,
