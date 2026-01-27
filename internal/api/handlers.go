@@ -31,7 +31,8 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, p *goals.Parser) {
 	mux.HandleFunc("/api/health", handleHealth(h))
 	mux.HandleFunc("/api/goals", corsMiddleware(handleGoalsRoot(h, p)))
 	mux.HandleFunc("/api/goals/", corsMiddleware(handleGoalRoutes(h, p)))
-	mux.HandleFunc("/api/projects", corsMiddleware(handleProjects(h)))
+	mux.HandleFunc("/api/projects", corsMiddleware(handleProjectsRoot(h, p)))
+	mux.HandleFunc("/api/projects/", corsMiddleware(handleProjectRoutes(h, p)))
 	// Session history routes
 	mux.HandleFunc("/api/history/", corsMiddleware(handleHistoryRoutes(h)))
 	// User identity and credentials routes
@@ -282,7 +283,7 @@ func handleExecutors(h *hub.Hub) http.HandlerFunc {
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 		if r.Method == http.MethodOptions {
@@ -1648,14 +1649,80 @@ type ProjectSummary struct {
 	WorkspaceError  string `json:"workspace_error,omitempty"` // Error message if not ready
 }
 
-// handleProjects handles GET /api/projects - lists all projects
-func handleProjects(h *hub.Hub) http.HandlerFunc {
+// AddProjectRequest is the request body for POST /api/projects
+type AddProjectRequest struct {
+	Name       string `json:"name"`
+	Path       string `json:"path"`        // Local path to the repository
+	BaseBranch string `json:"base_branch"` // Optional, will auto-detect
+}
+
+// AddProjectResponse is the response for POST /api/projects
+type AddProjectResponse struct {
+	Success      bool   `json:"success"`
+	Name         string `json:"name,omitempty"`
+	Path         string `json:"path,omitempty"`
+	BaseBranch   string `json:"base_branch,omitempty"`
+	GitRemote    string `json:"git_remote,omitempty"`
+	ConfigFile   string `json:"config_file,omitempty"`
+	WorktreePath string `json:"worktree_path,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+// RemoveProjectResponse is the response for DELETE /api/projects/:name
+type RemoveProjectResponse struct {
+	Success          bool     `json:"success"`
+	Name             string   `json:"name,omitempty"`
+	ConfigRemoved    bool     `json:"config_removed,omitempty"`
+	IndexUpdated     bool     `json:"index_updated,omitempty"`
+	WorkspaceRemoved bool     `json:"workspace_removed,omitempty"`
+	GoalsWarning     string   `json:"goals_warning,omitempty"`
+	ActiveGoals      []string `json:"active_goals,omitempty"`
+	Error            string   `json:"error,omitempty"`
+}
+
+// handleProjectsRoot handles /api/projects - GET lists, POST creates
+func handleProjectsRoot(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
+		switch r.Method {
+		case http.MethodGet:
+			handleListProjects(h)(w, r)
+		case http.MethodPost:
+			handleAddProject(h)(w, r)
+		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// handleProjectRoutes handles /api/projects/:name routes
+func handleProjectRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Parse path: /api/projects/:name
+		path := strings.TrimPrefix(r.URL.Path, "/api/projects/")
+		if path == "" {
+			http.Error(w, "Missing project name", http.StatusBadRequest)
 			return
 		}
 
+		// Handle DELETE /api/projects/:name
+		if r.Method == http.MethodDelete {
+			handleRemoveProject(h, p, path)(w, r)
+			return
+		}
+
+		// Handle GET /api/projects/:name (could be added later for detail)
+		if r.Method == http.MethodGet {
+			handleGetProject(h, p, path)(w, r)
+			return
+		}
+
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleListProjects handles GET /api/projects - lists all projects
+func handleListProjects(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		projects, err := operations.ListProjects(h.Dir())
 		if err != nil {
 			http.Error(w, "Failed to list projects: "+err.Error(), http.StatusInternalServerError)
@@ -1677,6 +1744,169 @@ func handleProjects(h *hub.Hub) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(summaries)
+	}
+}
+
+// handleAddProject handles POST /api/projects - adds a new project
+func handleAddProject(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[PROJECT] Received add project request from %s", r.RemoteAddr)
+
+		var req AddProjectRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(AddProjectResponse{
+				Success: false,
+				Error:   "Invalid JSON: " + err.Error(),
+			})
+			return
+		}
+
+		if req.Name == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(AddProjectResponse{
+				Success: false,
+				Error:   "Project name is required",
+			})
+			return
+		}
+
+		if req.Path == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(AddProjectResponse{
+				Success: false,
+				Error:   "Project path is required",
+			})
+			return
+		}
+
+		log.Printf("[PROJECT] Adding project: name=%q, path=%q, base_branch=%q", req.Name, req.Path, req.BaseBranch)
+
+		result, data := operations.AddProjectFromPath(operations.AddProjectOptions{
+			Name:       req.Name,
+			Path:       req.Path,
+			BaseBranch: req.BaseBranch,
+			VegaDir:    h.Dir(),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		if !result.Success {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(AddProjectResponse{
+				Success: false,
+				Error:   result.Error.Message,
+			})
+			return
+		}
+
+		log.Printf("[PROJECT] Project added: name=%s, path=%s", data.Name, data.Path)
+
+		// Emit SSE event
+		h.EmitEvent("project_added", map[string]interface{}{
+			"name":        data.Name,
+			"path":        data.Path,
+			"base_branch": data.BaseBranch,
+		})
+
+		json.NewEncoder(w).Encode(AddProjectResponse{
+			Success:      true,
+			Name:         data.Name,
+			Path:         data.Path,
+			BaseBranch:   data.BaseBranch,
+			GitRemote:    data.GitRemote,
+			ConfigFile:   data.ConfigFile,
+			WorktreePath: data.WorktreePath,
+		})
+	}
+}
+
+// handleRemoveProject handles DELETE /api/projects/:name - removes a project
+func handleRemoveProject(h *hub.Hub, p *goals.Parser, projectName string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[PROJECT] Received remove project request for %s from %s", projectName, r.RemoteAddr)
+
+		// Check for force query param
+		force := r.URL.Query().Get("force") == "true"
+
+		result, data := operations.RemoveProject(operations.RemoveProjectOptions{
+			Name:    projectName,
+			Force:   force,
+			VegaDir: h.Dir(),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		if !result.Success {
+			statusCode := http.StatusBadRequest
+			if result.Error.Code == "project_not_found" {
+				statusCode = http.StatusNotFound
+			} else if result.Error.Code == "has_active_goals" {
+				statusCode = http.StatusConflict
+			}
+
+			response := RemoveProjectResponse{
+				Success: false,
+				Name:    projectName,
+				Error:   result.Error.Message,
+			}
+
+			// Include active goals info if that's the error
+			if result.Error.Code == "has_active_goals" {
+				if goalsStr, ok := result.Error.Details["goals"]; ok {
+					response.ActiveGoals = strings.Split(goalsStr, ", ")
+				}
+			}
+
+			w.WriteHeader(statusCode)
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		log.Printf("[PROJECT] Project removed: name=%s", projectName)
+
+		// Emit SSE event
+		h.EmitEvent("project_removed", map[string]interface{}{
+			"name": projectName,
+		})
+
+		json.NewEncoder(w).Encode(RemoveProjectResponse{
+			Success:          true,
+			Name:             data.Name,
+			ConfigRemoved:    data.ConfigRemoved,
+			IndexUpdated:     data.IndexUpdated,
+			WorkspaceRemoved: data.WorkspaceRemoved,
+			GoalsWarning:     data.GoalsWarning,
+		})
+	}
+}
+
+// handleGetProject handles GET /api/projects/:name - returns project details
+func handleGetProject(h *hub.Hub, p *goals.Parser, projectName string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		proj, err := p.ParseProject(projectName)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]string{
+					"code":    "project_not_found",
+					"message": fmt.Sprintf("Project '%s' not found: %v", projectName, err),
+				},
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ProjectSummary{
+			Name:            proj.Name,
+			BaseBranch:      proj.BaseBranch,
+			Workspace:       proj.Workspace,
+			Upstream:        proj.Upstream,
+			WorkspaceStatus: proj.WorkspaceStatus,
+			WorkspaceError:  proj.WorkspaceError,
+		})
 	}
 }
 

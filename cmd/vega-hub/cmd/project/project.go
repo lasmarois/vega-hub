@@ -12,7 +12,8 @@ var ProjectCmd = &cobra.Command{
 
 Available subcommands:
   add       Add a new project
-  list      List all projects`,
+  list      List all projects
+  remove    Remove a project`,
 }
 
 func init() {

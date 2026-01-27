@@ -1163,3 +1163,357 @@ func resumeGoalInRegistry(registryPath, goalID, goalTitle, project string) error
 
 	return os.WriteFile(registryPath, []byte(strings.Join(finalLines, "\n")), 0644)
 }
+
+// =============================================================================
+// Project Operations
+// =============================================================================
+
+// AddProjectOptions contains options for adding a project
+type AddProjectOptions struct {
+	Name       string
+	Path       string // Local path to the repository
+	BaseBranch string
+	VegaDir    string
+}
+
+// AddProjectResult contains the result of adding a project
+type AddProjectResult struct {
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	BaseBranch   string `json:"base_branch"`
+	GitRemote    string `json:"git_remote,omitempty"`
+	ConfigFile   string `json:"config_file"`
+	WorktreePath string `json:"worktree_path"`
+}
+
+// RemoveProjectOptions contains options for removing a project
+type RemoveProjectOptions struct {
+	Name    string
+	Force   bool // Force removal even if goals exist
+	VegaDir string
+}
+
+// RemoveProjectResult contains the result of removing a project
+type RemoveProjectResult struct {
+	Name             string `json:"name"`
+	ConfigRemoved    bool   `json:"config_removed"`
+	IndexUpdated     bool   `json:"index_updated"`
+	WorkspaceRemoved bool   `json:"workspace_removed"`
+	GoalsWarning     string `json:"goals_warning,omitempty"`
+}
+
+// AddProjectFromPath adds a project from a local path
+func AddProjectFromPath(opts AddProjectOptions) (*Result, *AddProjectResult) {
+	// Validate project name
+	if !isValidProjectName(opts.Name) {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "invalid_name",
+				Message: "Invalid project name",
+				Details: map[string]string{
+					"name":    opts.Name,
+					"allowed": "alphanumeric, dash, underscore",
+				},
+			},
+		}, nil
+	}
+
+	// Validate path exists and is a git repo
+	if _, err := os.Stat(opts.Path); os.IsNotExist(err) {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "path_not_found",
+				Message: fmt.Sprintf("Path does not exist: %s", opts.Path),
+				Details: map[string]string{"path": opts.Path},
+			},
+		}, nil
+	}
+
+	gitDir := filepath.Join(opts.Path, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "not_git_repo",
+				Message: "Path is not a git repository",
+				Details: map[string]string{"path": opts.Path},
+			},
+		}, nil
+	}
+
+	// Check if project already exists
+	configFile := filepath.Join(opts.VegaDir, "projects", opts.Name+".md")
+	if _, err := os.Stat(configFile); err == nil {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "project_exists",
+				Message: fmt.Sprintf("Project '%s' already exists", opts.Name),
+				Details: map[string]string{"config": configFile},
+			},
+		}, nil
+	}
+
+	// Determine base branch
+	baseBranch := opts.BaseBranch
+	if baseBranch == "" {
+		// Try to detect from repo
+		cmd := exec.Command("git", "-C", opts.Path, "branch", "--show-current")
+		if output, err := cmd.Output(); err == nil {
+			baseBranch = strings.TrimSpace(string(output))
+		}
+		if baseBranch == "" {
+			baseBranch = "main"
+		}
+	}
+
+	// Get git remote
+	gitRemote := ""
+	cmd := exec.Command("git", "-C", opts.Path, "remote", "get-url", "origin")
+	if output, err := cmd.Output(); err == nil {
+		gitRemote = strings.TrimSpace(string(output))
+	}
+
+	// Create workspace structure
+	workspaceDir := filepath.Join(opts.VegaDir, "workspaces", opts.Name)
+	worktreeBase := filepath.Join(workspaceDir, "worktree-base")
+
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "mkdir_failed",
+				Message: "Failed to create workspace directory",
+				Details: map[string]string{"error": err.Error()},
+			},
+		}, nil
+	}
+
+	// Create symlink to the local repo
+	if err := os.Symlink(opts.Path, worktreeBase); err != nil {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "symlink_failed",
+				Message: "Failed to create symlink to repository",
+				Details: map[string]string{"error": err.Error()},
+			},
+		}, nil
+	}
+
+	// Create project config file
+	if err := createProjectConfigFile(configFile, opts.Name, opts.Path, baseBranch, gitRemote); err != nil {
+		// Cleanup on failure
+		os.RemoveAll(workspaceDir)
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "config_create_failed",
+				Message: "Failed to create project config",
+				Details: map[string]string{"error": err.Error()},
+			},
+		}, nil
+	}
+
+	// Update projects/index.md
+	indexFile := filepath.Join(opts.VegaDir, "projects", "index.md")
+	addProjectToIndex(indexFile, opts.Name)
+
+	return &Result{Success: true}, &AddProjectResult{
+		Name:         opts.Name,
+		Path:         opts.Path,
+		BaseBranch:   baseBranch,
+		GitRemote:    gitRemote,
+		ConfigFile:   configFile,
+		WorktreePath: worktreeBase,
+	}
+}
+
+// RemoveProject removes a project from management
+func RemoveProject(opts RemoveProjectOptions) (*Result, *RemoveProjectResult) {
+	result := &RemoveProjectResult{Name: opts.Name}
+
+	// Check if project config exists
+	configFile := filepath.Join(opts.VegaDir, "projects", opts.Name+".md")
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "project_not_found",
+				Message: fmt.Sprintf("Project '%s' not found", opts.Name),
+				Details: map[string]string{"name": opts.Name},
+			},
+		}, nil
+	}
+
+	// Check for active goals
+	parser := goals.NewParser(opts.VegaDir)
+	allGoals, _ := parser.ParseRegistry()
+	var activeGoals []string
+	for _, g := range allGoals {
+		if g.Status == "active" || g.Status == "iced" {
+			for _, p := range g.Projects {
+				if p == opts.Name {
+					activeGoals = append(activeGoals, g.ID)
+					break
+				}
+			}
+		}
+	}
+
+	if len(activeGoals) > 0 && !opts.Force {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "has_active_goals",
+				Message: fmt.Sprintf("Project has %d active/iced goal(s)", len(activeGoals)),
+				Details: map[string]string{
+					"goals": strings.Join(activeGoals, ", "),
+					"hint":  "Use --force to remove anyway",
+				},
+			},
+		}, nil
+	}
+
+	if len(activeGoals) > 0 {
+		result.GoalsWarning = fmt.Sprintf("%d active/iced goal(s) still reference this project", len(activeGoals))
+	}
+
+	// Remove config file
+	if err := os.Remove(configFile); err == nil {
+		result.ConfigRemoved = true
+	}
+
+	// Update index.md
+	indexFile := filepath.Join(opts.VegaDir, "projects", "index.md")
+	if err := removeProjectFromIndex(indexFile, opts.Name); err == nil {
+		result.IndexUpdated = true
+	}
+
+	// Remove workspace directory (optional, only if it's a symlink or force is set)
+	workspaceDir := filepath.Join(opts.VegaDir, "workspaces", opts.Name)
+	worktreeBase := filepath.Join(workspaceDir, "worktree-base")
+
+	// Check if worktree-base is a symlink (local project) - safe to remove
+	if info, err := os.Lstat(worktreeBase); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			// It's a symlink, safe to remove
+			os.RemoveAll(workspaceDir)
+			result.WorkspaceRemoved = true
+		} else if opts.Force {
+			// Not a symlink but force is set
+			os.RemoveAll(workspaceDir)
+			result.WorkspaceRemoved = true
+		}
+	}
+
+	return &Result{Success: true}, result
+}
+
+// Helper functions for project operations
+
+func isValidProjectName(name string) bool {
+	re := regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+	return re.MatchString(name)
+}
+
+func createProjectConfigFile(path, name, localPath, baseBranch, gitRemote string) error {
+	content := fmt.Sprintf(`# Project: %s
+
+## Overview
+
+_Brief description of the project_
+
+## Location
+
+**Workspace**: %s
+**Upstream**: %s
+**Base Branch**: %s
+
+## Active Goals
+
+_None currently active_
+
+## Completed Goals
+
+| ID | Title | Completed |
+|----|-------|-----------|
+| | | |
+
+## Project Context
+
+### Key Directories
+- %s - Source code
+
+### Related Projects
+- None
+
+## Notes for Executors
+
+When working on this project:
+1. Load %s skill at session start
+2. Planning files go at worktree root
+3. Commit with %s reference
+`, name,
+		fmt.Sprintf("`workspaces/%s/worktree-base/`", name),
+		fmt.Sprintf("`%s`", localPath),
+		fmt.Sprintf("`%s`", baseBranch),
+		"`src/`",
+		"`planning-with-files`",
+		"`Goal: <id>`")
+
+	return os.WriteFile(path, []byte(content), 0644)
+}
+
+func addProjectToIndex(indexPath, name string) error {
+	content, err := os.ReadFile(indexPath)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+	added := false
+
+	for i, line := range lines {
+		newLines = append(newLines, line)
+
+		// Find the table and add after the header separator
+		if !added && strings.Contains(line, "|---") {
+			// Check if this is in the projects table
+			if i > 0 && strings.Contains(lines[i-1], "| Project |") {
+				// Add new project row
+				projectRow := fmt.Sprintf("| [%s](%s.md) | `workspaces/%s/worktree-base/` | - | _Add description_ |",
+					name, name, name)
+				newLines = append(newLines, projectRow)
+				added = true
+			}
+		}
+	}
+
+	return os.WriteFile(indexPath, []byte(strings.Join(newLines, "\n")), 0644)
+}
+
+func removeProjectFromIndex(indexPath, name string) error {
+	content, err := os.ReadFile(indexPath)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+
+	// Pattern to match project row
+	pattern := regexp.MustCompile(fmt.Sprintf(`\[%s\]\(%s\.md\)`, regexp.QuoteMeta(name), regexp.QuoteMeta(name)))
+
+	for _, line := range lines {
+		if pattern.MatchString(line) {
+			continue // Skip this line
+		}
+		newLines = append(newLines, line)
+	}
+
+	return os.WriteFile(indexPath, []byte(strings.Join(newLines, "\n")), 0644)
+}
