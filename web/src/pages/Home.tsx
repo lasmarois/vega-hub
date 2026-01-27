@@ -1,24 +1,10 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Progress } from '@/components/ui/progress'
 import { Target, Snowflake, CheckCircle2, FolderOpen, AlertCircle, Activity } from 'lucide-react'
 import { ActivityItem } from '@/components/shared/ActivityItem'
 import { EmptyState } from '@/components/shared/EmptyState'
+import { GoalCard } from '@/components/goals'
 import type { GoalSummary, Activity as ActivityType } from '@/lib/types'
-
-// Parse phase string like "2/4" or "Phase 2" into { current, total }
-function parsePhase(phase: string): { current: number; total: number } | null {
-  const slashMatch = phase.match(/(\d+)\s*\/\s*(\d+)/)
-  if (slashMatch) {
-    return { current: parseInt(slashMatch[1]), total: parseInt(slashMatch[2]) }
-  }
-  const phaseMatch = phase.match(/phase\s*(\d+)/i)
-  if (phaseMatch) {
-    return { current: parseInt(phaseMatch[1]), total: 0 }
-  }
-  return null
-}
 
 interface HomeProps {
   goals: GoalSummary[]
@@ -132,52 +118,11 @@ export function Home({ goals, loading, pendingQuestions, activities, onGoalClick
         ) : (
           <div className="space-y-3">
             {activeGoals.slice(0, 5).map(goal => (
-              <Card
+              <GoalCard
                 key={goal.id}
-                className="cursor-pointer hover:bg-accent/50 transition-colors"
+                goal={goal}
                 onClick={() => onGoalClick(goal.id)}
-              >
-                <CardHeader className="p-4 pb-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className={`h-2 w-2 rounded-full ${
-                        goal.executor_status === 'running' ? 'bg-green-500 animate-pulse' :
-                        goal.executor_status === 'waiting' ? 'bg-red-500' :
-                        'bg-muted-foreground'
-                      }`} />
-                      <CardTitle className="text-base">#{goal.id}</CardTitle>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant={
-                        goal.executor_status === 'running' ? 'success' :
-                        goal.executor_status === 'waiting' ? 'destructive' :
-                        'secondary'
-                      }>
-                        {goal.executor_status.toUpperCase()}
-                      </Badge>
-                      {goal.pending_questions > 0 && (
-                        <Badge variant="destructive">{goal.pending_questions}</Badge>
-                      )}
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-4 pt-0">
-                  <p className="text-sm mb-2">{goal.title}</p>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground mb-2">
-                    {goal.projects.length > 0 && (
-                      <span>{goal.projects.join(', ')}</span>
-                    )}
-                  </div>
-                  {(() => {
-                    const phaseInfo = parsePhase(goal.phase)
-                    return phaseInfo && phaseInfo.total > 0 ? (
-                      <Progress value={phaseInfo.current} max={phaseInfo.total} showLabel />
-                    ) : (
-                      <div className="text-xs text-muted-foreground">Phase: {goal.phase}</div>
-                    )
-                  })()}
-                </CardContent>
-              </Card>
+              />
             ))}
           </div>
         )}
