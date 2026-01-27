@@ -20,8 +20,9 @@ import (
 var stateManager *goals.StateManager
 
 var (
-	createBaseBranch string
-	createNoWorktree bool
+	createBaseBranch   string
+	createNoWorktree   bool
+	createSkipPreflight bool
 )
 
 // CreateResult contains the result of creating a goal
@@ -55,6 +56,7 @@ func init() {
 	GoalCmd.AddCommand(createCmd)
 	createCmd.Flags().StringVar(&createBaseBranch, "base-branch", "", "Base branch (default: from project config)")
 	createCmd.Flags().BoolVar(&createNoWorktree, "no-worktree", false, "Create goal file and registry only, no worktree")
+	createCmd.Flags().BoolVar(&createSkipPreflight, "skip-preflight", false, "Skip pre-flight checks (escape hatch)")
 }
 
 func runCreate(c *cobra.Command, args []string) {
@@ -181,6 +183,40 @@ func runCreate(c *cobra.Command, args []string) {
 	// Create worktree (unless --no-worktree)
 	var worktreePath string
 	if !createNoWorktree {
+		// Run pre-flight checks (unless --skip-preflight)
+		if !createSkipPreflight {
+			checker := hub.NewPreflightChecker(projectBase, baseBranch, goalBranch)
+			preflightResult := checker.RunAll()
+
+			if !preflightResult.Ready {
+				// Transition to failed state
+				stateManager.Transition(goalID, goals.StateFailed, "Pre-flight checks failed", map[string]string{
+					"blocking_issues": strings.Join(preflightResult.BlockingIssues, ", "),
+				})
+				doRollback()
+
+				// Build details map for error output
+				details := map[string]string{
+					"blocking_issues": strings.Join(preflightResult.BlockingIssues, ", "),
+				}
+				for i, cmd := range preflightResult.FixCommands {
+					details[fmt.Sprintf("fix_%d", i+1)] = cmd
+				}
+				for name, check := range preflightResult.Checks {
+					if !check.Passed {
+						details[name] = check.Error
+					}
+				}
+
+				cli.OutputError(cli.ExitValidationError, "preflight_failed",
+					"Pre-flight checks failed",
+					details,
+					[]cli.ErrorOption{
+						{Flag: "skip-preflight", Description: "Skip pre-flight checks (escape hatch)"},
+					})
+			}
+		}
+
 		// Transition to branching state
 		if err := stateManager.Transition(goalID, goals.StateBranching, "Creating worktree", map[string]string{
 			"branch":      goalBranch,
