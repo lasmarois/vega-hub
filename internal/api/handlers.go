@@ -656,6 +656,13 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleGoalChildren(p, id)(w, r)
 		case "hierarchy":
 			handleGoalHierarchy(p, id)(w, r)
+		case "planning-files":
+			// Handle nested paths like "planning-files/:project/:filename"
+			if len(actionParts) > 1 {
+				handleGoalPlanningFileAction(p, id, actionParts[1])(w, r)
+			} else {
+				handleGoalPlanningFiles(p, id)(w, r)
+			}
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -3353,4 +3360,161 @@ func handleReadyGoals(p *goals.Parser) http.HandlerFunc {
 			Total: len(readyGoals),
 		})
 	}
+}
+
+// PlanningFilesListResponse is the response for GET /api/goals/:id/planning-files
+type PlanningFilesListResponse struct {
+	GoalID string              `json:"goal_id"`
+	Files  map[string][]string `json:"files"` // project -> [filenames]
+}
+
+// PlanningFilesFullResponse is the response for GET /api/goals/:id/planning-files?full=true
+type PlanningFilesFullResponse struct {
+	GoalID string                       `json:"goal_id"`
+	Files  map[string]map[string]string `json:"files"` // project -> {filename: content}
+}
+
+// handleGoalPlanningFiles handles GET /api/goals/:id/planning-files
+// Returns list of files or full content if ?full=true
+func handleGoalPlanningFiles(p *goals.Parser, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		mgr := goals.NewPlanningFilesManager(p.Dir())
+
+		// Check if full content requested
+		if r.URL.Query().Get("full") == "true" {
+			files, err := mgr.GetAllPlanningFiles(goalID)
+			if err != nil {
+				http.Error(w, "Failed to get planning files: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(PlanningFilesFullResponse{
+				GoalID: goalID,
+				Files:  files,
+			})
+			return
+		}
+
+		// Return list of files
+		files, err := mgr.ListPlanningFiles(goalID)
+		if err != nil {
+			http.Error(w, "Failed to list planning files: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(PlanningFilesListResponse{
+			GoalID: goalID,
+			Files:  files,
+		})
+	}
+}
+
+// handleGoalPlanningFileAction handles GET/POST /api/goals/:id/planning-files/:project/:filename
+func handleGoalPlanningFileAction(p *goals.Parser, goalID, subPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Parse subPath: project/filename
+		parts := strings.SplitN(subPath, "/", 2)
+		if len(parts) != 2 {
+			http.Error(w, "Invalid path: expected planning-files/:project/:filename", http.StatusBadRequest)
+			return
+		}
+
+		project := parts[0]
+		filename := parts[1]
+
+		mgr := goals.NewPlanningFilesManager(p.Dir())
+
+		switch r.Method {
+		case http.MethodGet:
+			// Get planning file content
+			content, err := mgr.GetPlanningFile(goalID, project, filename)
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					http.Error(w, err.Error(), http.StatusNotFound)
+				} else {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+				return
+			}
+
+			// Return raw text content
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Write([]byte(content))
+
+		case http.MethodPost:
+			// Save planning file (body is raw content)
+			content, err := readRequestBody(r, 1024*1024) // 1MB max
+			if err != nil {
+				http.Error(w, "Failed to read request body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			if err := mgr.SavePlanningFile(goalID, project, filename, string(content)); err != nil {
+				http.Error(w, "Failed to save planning file: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":  true,
+				"goal_id":  goalID,
+				"project":  project,
+				"filename": filename,
+			})
+
+		case http.MethodDelete:
+			// Delete planning file
+			if err := mgr.DeletePlanningFile(goalID, project, filename); err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					http.Error(w, err.Error(), http.StatusNotFound)
+				} else {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":  true,
+				"goal_id":  goalID,
+				"project":  project,
+				"filename": filename,
+				"deleted":  true,
+			})
+
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// readRequestBody reads the request body up to maxBytes
+func readRequestBody(r *http.Request, maxBytes int64) ([]byte, error) {
+	if r.ContentLength > maxBytes {
+		return nil, fmt.Errorf("request body too large (max %d bytes)", maxBytes)
+	}
+
+	// Limit the reader to prevent abuse
+	limitedReader := http.MaxBytesReader(nil, r.Body, maxBytes)
+	defer r.Body.Close()
+
+	content := make([]byte, 0, r.ContentLength)
+	buf := make([]byte, 4096)
+	for {
+		n, err := limitedReader.Read(buf)
+		if n > 0 {
+			content = append(content, buf[:n]...)
+		}
+		if err != nil {
+			break
+		}
+	}
+	return content, nil
 }
