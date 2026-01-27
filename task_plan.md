@@ -12,14 +12,14 @@ Create `internal/goals/completion.go` with detection logic to identify when a go
 
 ## Phases
 
-### Phase 1: Completion Detection Logic (Current)
+### Phase 1: Completion Detection Logic (Complete)
 - [x] Analyze existing patterns in parser.go and state.go
-- [ ] Create `completion.go` with CompletionStatus struct
-- [ ] Implement planning file parsing (task_plan.md)
-- [ ] Implement goal file acceptance criteria parsing
-- [ ] Implement commit message detection
-- [ ] Create comprehensive test file
-- [ ] Run tests and ensure passing
+- [x] Create `completion.go` with CompletionStatus struct
+- [x] Implement planning file parsing (task_plan.md)
+- [x] Implement goal file acceptance criteria parsing
+- [x] Implement commit message detection
+- [x] Create comprehensive test file
+- [x] Run tests and ensure passing (47 tests passing)
 
 ### Phase 2: API Integration
 - [ ] Add `GET /api/goals/:id/completion-status` endpoint
