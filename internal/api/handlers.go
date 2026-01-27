@@ -561,6 +561,12 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 
 		id := parts[0] // Goal ID can be numeric ("10") or hash ("4fd584d")
 
+		// Handle special routes that aren't goal IDs
+		if id == "ready" {
+			handleReadyGoals(p)(w, r)
+			return
+		}
+
 		// Route to appropriate handler
 		if len(parts) == 1 {
 			// GET /api/goals/:id
@@ -614,6 +620,14 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleGoalState(h, id)(w, r)
 		case "completion-status":
 			handleGoalCompletionStatus(h, p, id)(w, r)
+		case "dependencies":
+			// Handle nested paths like "dependencies/:dep_id"
+			if len(actionParts) > 1 {
+				depID := actionParts[1]
+				handleGoalDependencyAction(p, id, depID)(w, r)
+			} else {
+				handleGoalDependencies(p, id)(w, r)
+			}
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -3043,5 +3057,149 @@ func copyHooksToWorktree(vegaDir, worktreePath string) {
 	destSettings := filepath.Join(worktreePath, ".claude", "settings.local.json")
 	if content, err := os.ReadFile(templateSettings); err == nil {
 		os.WriteFile(destSettings, content, 0644)
+	}
+}
+
+// ============================================================================
+// Goal Dependencies API
+// ============================================================================
+
+// AddDependencyRequest is the request body for POST /api/goals/:id/dependencies
+type AddDependencyRequest struct {
+	DependsOn string `json:"depends_on"`
+	Type      string `json:"type"` // "blocks" or "related"
+}
+
+// DependencyResponse wraps dependency info for API responses
+type DependencyResponse struct {
+	GoalID       string              `json:"goal_id"`
+	Dependencies []goals.Dependency  `json:"dependencies"`
+	Dependents   []goals.Dependency  `json:"dependents"`
+}
+
+// ReadyGoalsResponse wraps ready goals for API responses
+type ReadyGoalsResponse struct {
+	Goals []goals.Goal `json:"goals"`
+	Total int          `json:"total"`
+}
+
+// handleGoalDependencies handles GET/POST /api/goals/:id/dependencies
+func handleGoalDependencies(p *goals.Parser, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dm := goals.NewDependencyManager(p.Dir())
+
+		switch r.Method {
+		case http.MethodGet:
+			// GET: Return all dependencies and dependents
+			info, err := dm.GetDependencies(goalID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(DependencyResponse{
+				GoalID:       goalID,
+				Dependencies: info.Dependencies,
+				Dependents:   info.Dependents,
+			})
+
+		case http.MethodPost:
+			// POST: Add a new dependency
+			var req AddDependencyRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			if req.DependsOn == "" {
+				http.Error(w, "depends_on is required", http.StatusBadRequest)
+				return
+			}
+
+			// Default to "blocks" if not specified
+			depType := goals.DependencyType(req.Type)
+			if depType == "" {
+				depType = goals.DependencyBlocks
+			}
+
+			if err := dm.AddDependency(goalID, req.DependsOn, depType); err != nil {
+				// Check if it's a validation error vs server error
+				if strings.Contains(err.Error(), "circular") ||
+					strings.Contains(err.Error(), "not found") ||
+					strings.Contains(err.Error(), "itself") ||
+					strings.Contains(err.Error(), "invalid") {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+				} else {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"ok":         true,
+				"goal_id":    goalID,
+				"depends_on": req.DependsOn,
+				"type":       string(depType),
+			})
+
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// handleGoalDependencyAction handles DELETE /api/goals/:id/dependencies/:dep_id
+func handleGoalDependencyAction(p *goals.Parser, goalID, depID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		dm := goals.NewDependencyManager(p.Dir())
+
+		if err := dm.RemoveDependency(goalID, depID); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				http.Error(w, err.Error(), http.StatusNotFound)
+			} else {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":      true,
+			"goal_id": goalID,
+			"removed": depID,
+		})
+	}
+}
+
+// handleReadyGoals handles GET /api/goals/ready
+func handleReadyGoals(p *goals.Parser) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Get optional project filter
+		projectFilter := r.URL.Query().Get("project")
+
+		dm := goals.NewDependencyManager(p.Dir())
+		readyGoals, err := dm.GetReadyGoals(projectFilter)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ReadyGoalsResponse{
+			Goals: readyGoals,
+			Total: len(readyGoals),
+		})
 	}
 }
