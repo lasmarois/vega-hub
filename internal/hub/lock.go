@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -71,12 +70,11 @@ func (l *LockInfo) IsStale() bool {
 	return false
 }
 
-// Lock represents a file-based lock using OS-level flock
+// Lock represents a file-based lock
 type Lock struct {
-	path       string
-	info       *LockInfo
-	acquired   bool
-	file       *os.File // Keep file open while holding the lock (for flock)
+	path     string
+	info     *LockInfo
+	acquired bool
 }
 
 // LockManager handles lock acquisition and release
@@ -197,14 +195,15 @@ func (m *LockManager) acquire(lockType LockType, resource, goalID, project, owne
 	}
 }
 
-// TryAcquire attempts to acquire a lock without waiting
+// TryAcquire attempts to acquire a lock with exponential backoff retry
+// Retries up to 5 times with delays: 50ms, 100ms, 200ms, 400ms, 800ms (~1.5s total)
 func (m *LockManager) TryAcquire(lockType LockType, resource, goalID, project, owner string) (*Lock, error) {
 	if err := m.ensureLocksDir(); err != nil {
 		return nil, fmt.Errorf("creating locks directory: %w", err)
 	}
 
 	lockPath := m.lockPath(lockType, resource)
-	
+
 	hostname, _ := os.Hostname()
 	info := &LockInfo{
 		PID:        os.Getpid(),
@@ -222,9 +221,24 @@ func (m *LockManager) TryAcquire(lockType LockType, resource, goalID, project, o
 		info: info,
 	}
 
-	err := lock.tryAcquire()
-	if err != nil {
-		// Check if stale
+	// Exponential backoff: 50ms, 100ms, 200ms, 400ms, 800ms
+	const maxRetries = 5
+	delay := 50 * time.Millisecond
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(delay)
+			delay *= 2 // Double the delay for next retry
+		}
+
+		err := lock.tryAcquire()
+		if err == nil {
+			return lock, nil
+		}
+		lastErr = err
+
+		// Check if stale and try to steal
 		if os.IsExist(err) {
 			existingLock, readErr := m.GetLockInfo(lockPath)
 			if readErr == nil && existingLock.IsStale() {
@@ -233,10 +247,9 @@ func (m *LockManager) TryAcquire(lockType LockType, resource, goalID, project, o
 				}
 			}
 		}
-		return nil, &LockError{Resource: resource, LockType: lockType, Err: err}
 	}
 
-	return lock, nil
+	return nil, &LockError{Resource: resource, LockType: lockType, Err: lastErr}
 }
 
 // GetLockInfo reads lock information from a lock file
