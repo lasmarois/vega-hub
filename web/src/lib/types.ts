@@ -7,6 +7,33 @@ export interface Question {
   created_at: string
 }
 
+// Dependencies
+export interface Dependency {
+  goal_id: string
+  type: 'blocks' | 'related'
+}
+
+export interface DependencyInfo {
+  dependencies: Dependency[]  // Goals this one depends on
+  dependents: Dependency[]    // Goals that depend on this one
+  is_blocked: boolean
+  blockers: string[]          // IDs of blocking goals that are still open
+}
+
+// Hierarchy
+export interface HierarchyInfo {
+  parent_id?: string
+  children: string[]
+  depth: number
+}
+
+// Planning files
+export interface PlanningFile {
+  project: string
+  filename: string
+  content?: string
+}
+
 // CompletionSignalType indicates the source of a completion signal
 export type CompletionSignalType = 'planning_file' | 'acceptance' | 'commit' | 'goal_phases'
 
@@ -39,6 +66,11 @@ export interface GoalSummary {
   workspace_status?: 'ready' | 'missing' | 'error'
   workspace_error?: string
   completion_status?: CompletionStatus
+  // Dependency fields
+  is_blocked?: boolean
+  // Hierarchy fields
+  parent_id?: string
+  has_children?: boolean
 }
 
 export interface PhaseDetail {
@@ -112,6 +144,10 @@ export interface GoalDetail {
   state_history?: StateEvent[]
   // Completion detection
   completion_status?: CompletionStatus
+  // Dependencies
+  dependencies?: DependencyInfo
+  // Hierarchy
+  hierarchy?: HierarchyInfo
 }
 
 export interface GoalStatus {

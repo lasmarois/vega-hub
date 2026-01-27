@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Ban, GitFork } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalSummary } from '@/lib/types'
 
@@ -44,6 +44,7 @@ export function GoalCard({ goal, onClick }: GoalCardProps) {
       className={cn(
         "cursor-pointer hover:bg-accent/50 transition-all",
         goal.status === 'completed' && "opacity-60",
+        goal.is_blocked && "opacity-60 border-yellow-500/50",
         appearsComplete && "border-green-500 bg-green-50/50 dark:bg-green-950/20 shadow-md shadow-green-500/10"
       )}
       onClick={onClick}
@@ -74,6 +75,18 @@ export function GoalCard({ goal, onClick }: GoalCardProps) {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {goal.is_blocked && (
+              <Badge variant="warning" className="gap-1">
+                <Ban className="h-3 w-3" />
+                Blocked
+              </Badge>
+            )}
+            {(goal.parent_id || goal.has_children) && (
+              <Badge variant="outline" className="gap-1">
+                <GitFork className="h-3 w-3" />
+                {goal.parent_id && goal.has_children ? 'Child+' : goal.parent_id ? 'Child' : 'Parent'}
+              </Badge>
+            )}
             {goal.pending_questions > 0 && (
               <Badge variant="destructive" className="gap-1">
                 {goal.pending_questions} Q

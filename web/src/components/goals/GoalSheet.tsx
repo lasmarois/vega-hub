@@ -27,9 +27,9 @@ import {
 } from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle, Info, Activity, Sparkles, ListTodo } from 'lucide-react'
+import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle, Info, Activity, Sparkles, ListTodo, Ban, Link2, GitFork, ChevronRight, FolderOpen, FileCode } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { GoalDetail, GoalStatus, GoalState } from '@/lib/types'
+import type { GoalDetail, GoalStatus, GoalState, PlanningFile } from '@/lib/types'
 
 // Helper to get badge variant, label, and description for state
 function getStateInfo(state: GoalState): { variant: 'default' | 'secondary' | 'destructive' | 'success' | 'outline'; label: string; description: string } {
@@ -199,6 +199,10 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
   const [createMRDialogOpen, setCreateMRDialogOpen] = useState(false)
   const [recreateWorktreeDialogOpen, setRecreateWorktreeDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [planningFiles, setPlanningFiles] = useState<PlanningFile[]>([])
+  const [loadingPlanningFiles, setLoadingPlanningFiles] = useState(false)
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
+  const [isMetaExecutor, setIsMetaExecutor] = useState(false)
 
   const handleAnswer = async (questionId: string, answer: string) => {
     if (!answer?.trim()) return
@@ -228,6 +232,7 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
         body: JSON.stringify({
           context: spawnContext || undefined,
           mode: spawnMode || undefined,
+          meta: isMetaExecutor || undefined,
         }),
       })
 
@@ -371,25 +376,37 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                         className="flex-1"
                       />
                     </div>
-                    <div className="flex gap-2 justify-end">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setShowSpawnInput(false)
-                          setSpawnMode('')
-                          setSpawnContext('')
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={handleSpawnExecutor}
-                        disabled={spawning}
-                        size="sm"
-                      >
-                        {spawning ? 'Starting...' : 'Start'}
-                      </Button>
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isMetaExecutor}
+                          onChange={(e) => setIsMetaExecutor(e.target.checked)}
+                          className="rounded border-gray-300"
+                        />
+                        Meta-executor (spawns sub-executors)
+                      </label>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setShowSpawnInput(false)
+                            setSpawnMode('')
+                            setSpawnContext('')
+                            setIsMetaExecutor(false)
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={handleSpawnExecutor}
+                          disabled={spawning}
+                          size="sm"
+                        >
+                          {spawning ? 'Starting...' : 'Start'}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -625,10 +642,25 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
               )}
             </TabsTrigger>
             <TabsTrigger
+              value="dependencies"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2"
+            >
+              Deps
+              {goal.dependencies?.is_blocked && (
+                <Ban className="ml-1 h-3 w-3 text-yellow-500" />
+              )}
+            </TabsTrigger>
+            <TabsTrigger
               value="planning"
               className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2"
             >
               Planning
+            </TabsTrigger>
+            <TabsTrigger
+              value="files"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2"
+            >
+              Files
             </TabsTrigger>
             <TabsTrigger
               value="timeline"
@@ -729,6 +761,55 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                 </Card>
               )}
 
+              {/* Hierarchy Section */}
+              {goal.hierarchy && (goal.hierarchy.parent_id || goal.hierarchy.children.length > 0) && (
+                <Card className="mb-4">
+                  <CardHeader className="p-3 pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <GitFork className="h-4 w-4" />
+                      Goal Hierarchy
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-3 pt-0 space-y-2">
+                    {goal.hierarchy.parent_id && (
+                      <div className="text-sm">
+                        <span className="text-muted-foreground">Parent:</span>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0 ml-2 text-primary"
+                          onClick={() => {
+                            // Navigate to parent goal
+                            onOpenChange(false)
+                            // The parent component should handle this
+                            window.location.hash = `#goal-${goal.hierarchy!.parent_id}`
+                          }}
+                        >
+                          #{goal.hierarchy.parent_id}
+                        </Button>
+                      </div>
+                    )}
+                    {goal.hierarchy.children.length > 0 && (
+                      <div className="text-sm">
+                        <span className="text-muted-foreground">Children ({goal.hierarchy.children.length}):</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {goal.hierarchy.children.map((childId) => (
+                            <Badge key={childId} variant="outline" className="cursor-pointer hover:bg-accent">
+                              #{childId}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {goal.hierarchy.depth > 0 && (
+                      <div className="text-xs text-muted-foreground">
+                        Depth: {goal.hierarchy.depth}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               {goal.overview && (
                 <div className="mb-4">
                   <h4 className="font-medium mb-2">Description</h4>
@@ -822,6 +903,102 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
               />
             </TabsContent>
 
+            <TabsContent value="dependencies" className="p-4 m-0">
+              {goal.dependencies ? (
+                <div className="space-y-4">
+                  {/* Blocked By Section */}
+                  {goal.dependencies.blockers.length > 0 && (
+                    <Card className="border-yellow-500/50">
+                      <CardHeader className="p-3 pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2 text-yellow-600">
+                          <Ban className="h-4 w-4" />
+                          Blocked By ({goal.dependencies.blockers.length})
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-3 pt-0">
+                        <div className="flex flex-wrap gap-2">
+                          {goal.dependencies.blockers.map((blockerId) => (
+                            <Badge key={blockerId} variant="warning" className="cursor-pointer hover:opacity-80">
+                              #{blockerId}
+                            </Badge>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Dependencies Section - Goals this one depends on */}
+                  {goal.dependencies.dependencies.length > 0 && (
+                    <Card>
+                      <CardHeader className="p-3 pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                          <ChevronRight className="h-4 w-4" />
+                          Depends On ({goal.dependencies.dependencies.length})
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-3 pt-0">
+                        <div className="space-y-2">
+                          {goal.dependencies.dependencies.map((dep) => (
+                            <div key={dep.goal_id} className="flex items-center gap-2">
+                              <Badge variant={dep.type === 'blocks' ? 'destructive' : 'outline'} className="cursor-pointer">
+                                #{dep.goal_id}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {dep.type === 'blocks' ? 'blocking' : 'related'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Dependents Section - Goals that depend on this one */}
+                  {goal.dependencies.dependents.length > 0 && (
+                    <Card>
+                      <CardHeader className="p-3 pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                          <Link2 className="h-4 w-4" />
+                          Blocking Others ({goal.dependencies.dependents.length})
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-3 pt-0">
+                        <div className="space-y-2">
+                          {goal.dependencies.dependents.map((dep) => (
+                            <div key={dep.goal_id} className="flex items-center gap-2">
+                              <Badge variant={dep.type === 'blocks' ? 'warning' : 'outline'} className="cursor-pointer">
+                                #{dep.goal_id}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {dep.type === 'blocks' ? 'blocked by this' : 'related'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Empty State */}
+                  {goal.dependencies.dependencies.length === 0 && 
+                   goal.dependencies.dependents.length === 0 && 
+                   goal.dependencies.blockers.length === 0 && (
+                    <EmptyState
+                      icon={Link2}
+                      title="No dependencies"
+                      description="This goal has no dependencies or dependents"
+                    />
+                  )}
+                </div>
+              ) : (
+                <EmptyState
+                  icon={Link2}
+                  title="No dependencies"
+                  description="Dependency tracking not available for this goal"
+                />
+              )}
+            </TabsContent>
+
             <TabsContent value="planning" className="p-4 m-0">
               {goalStatus && goalStatus.has_worktree ? (
                 <div className="space-y-4">
@@ -904,6 +1081,108 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                   icon={BookOpen}
                   title="No planning files"
                   description="Planning files will appear when an executor is working on this goal"
+                />
+              )}
+            </TabsContent>
+
+            <TabsContent value="files" className="p-4 m-0">
+              {goal.projects.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium">Planning Files</h4>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={loadingPlanningFiles}
+                      onClick={async () => {
+                        setLoadingPlanningFiles(true)
+                        try {
+                          const res = await fetch(`/api/goals/${goal.id}/planning-files`)
+                          if (res.ok) {
+                            const files = await res.json()
+                            setPlanningFiles(files)
+                          }
+                        } catch (err) {
+                          console.error('Failed to fetch planning files:', err)
+                        } finally {
+                          setLoadingPlanningFiles(false)
+                        }
+                      }}
+                    >
+                      <RefreshCw className={cn("h-4 w-4 mr-1", loadingPlanningFiles && "animate-spin")} />
+                      Refresh
+                    </Button>
+                  </div>
+
+                  {planningFiles.length > 0 ? (
+                    <div className="space-y-3">
+                      {/* Group by project */}
+                      {goal.projects.map((project) => {
+                        const projectFiles = planningFiles.filter(f => f.project === project)
+                        if (projectFiles.length === 0) return null
+                        return (
+                          <Card key={project}>
+                            <CardHeader className="p-3 pb-2">
+                              <CardTitle className="text-sm flex items-center gap-2">
+                                <FolderOpen className="h-4 w-4" />
+                                {project}
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent className="p-3 pt-0 space-y-2">
+                              {projectFiles.map((file) => {
+                                const fileKey = `${file.project}/${file.filename}`
+                                const isExpanded = expandedFiles.has(fileKey)
+                                return (
+                                  <div key={fileKey}>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="w-full justify-between h-auto py-2"
+                                      onClick={() => {
+                                        const newExpanded = new Set(expandedFiles)
+                                        if (isExpanded) {
+                                          newExpanded.delete(fileKey)
+                                        } else {
+                                          newExpanded.add(fileKey)
+                                        }
+                                        setExpandedFiles(newExpanded)
+                                      }}
+                                    >
+                                      <span className="flex items-center gap-2">
+                                        <FileCode className="h-4 w-4" />
+                                        {file.filename}
+                                      </span>
+                                      <ChevronRight className={cn(
+                                        "h-4 w-4 transition-transform",
+                                        isExpanded && "rotate-90"
+                                      )} />
+                                    </Button>
+                                    {isExpanded && file.content && (
+                                      <pre className="mt-2 p-3 bg-muted rounded-md text-xs overflow-auto max-h-64 whitespace-pre-wrap font-mono">
+                                        {file.content}
+                                      </pre>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </CardContent>
+                          </Card>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      icon={FileCode}
+                      title="No planning files loaded"
+                      description="Click Refresh to load planning files for this goal"
+                    />
+                  )}
+                </div>
+              ) : (
+                <EmptyState
+                  icon={FileCode}
+                  title="No projects"
+                  description="This goal has no associated projects"
                 />
               )}
             </TabsContent>

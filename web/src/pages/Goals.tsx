@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Target, ChevronDown, Plus } from 'lucide-react'
+import { Target, ChevronDown, Plus, GitFork, CheckCircle, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalSummary, Project } from '@/lib/types'
 import { CreateGoalDialog, GoalCard } from '@/components/goals'
@@ -22,7 +22,7 @@ interface GoalsProps {
   onRefresh: () => void
 }
 
-type FilterType = 'all' | 'active' | 'iced' | 'completed'
+type FilterType = 'all' | 'active' | 'iced' | 'completed' | 'ready'
 type SortType = 'newest' | 'oldest' | 'status' | 'questions'
 
 export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
@@ -31,6 +31,8 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
   const [showCompleted, setShowCompleted] = useState(false)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
+  const [treeView, setTreeView] = useState(false)
+  const [expandedGoals, setExpandedGoals] = useState<Set<string>>(new Set())
 
   // Fetch projects for the create dialog
   useEffect(() => {
@@ -40,16 +42,21 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
       .catch(err => console.error('Failed to load projects:', err))
   }, [])
 
+  const readyGoals = goals.filter(g => g.status === 'active' && !g.is_blocked)
+
   const filterOptions: { value: FilterType; label: string; count: number }[] = [
     { value: 'all', label: 'All', count: goals.length },
     { value: 'active', label: 'Active', count: goals.filter(g => g.status === 'active').length },
+    { value: 'ready', label: 'Ready', count: readyGoals.length },
     { value: 'iced', label: 'Iced', count: goals.filter(g => g.status === 'iced').length },
     { value: 'completed', label: 'Completed', count: goals.filter(g => g.status === 'completed').length },
   ]
 
-  const filteredGoals = filter === 'all'
-    ? goals
-    : goals.filter(g => g.status === filter)
+  const filteredGoals = useMemo(() => {
+    if (filter === 'all') return goals
+    if (filter === 'ready') return readyGoals
+    return goals.filter(g => g.status === filter)
+  }, [goals, filter, readyGoals])
 
   const sortedGoals = useMemo(() => {
     const sorted = [...filteredGoals]
@@ -76,6 +83,78 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
 
   const activeAndIcedGoals = sortedGoals.filter(g => g.status !== 'completed')
   const completedGoals = sortedGoals.filter(g => g.status === 'completed')
+
+  // Build tree structure for tree view
+  const { rootGoals, childrenMap } = useMemo(() => {
+    if (!treeView) return { rootGoals: activeAndIcedGoals, childrenMap: new Map() }
+    
+    const childrenMap = new Map<string, GoalSummary[]>()
+    const rootGoals: GoalSummary[] = []
+    
+    // First pass: group children by parent
+    activeAndIcedGoals.forEach(goal => {
+      if (goal.parent_id) {
+        const children = childrenMap.get(goal.parent_id) || []
+        children.push(goal)
+        childrenMap.set(goal.parent_id, children)
+      }
+    })
+    
+    // Second pass: find roots (no parent or parent not in list)
+    const goalIds = new Set(activeAndIcedGoals.map(g => g.id))
+    activeAndIcedGoals.forEach(goal => {
+      if (!goal.parent_id || !goalIds.has(goal.parent_id)) {
+        rootGoals.push(goal)
+      }
+    })
+    
+    return { rootGoals, childrenMap }
+  }, [activeAndIcedGoals, treeView])
+
+  // Recursive tree node component
+  const renderGoalTree = (goal: GoalSummary, depth: number = 0) => {
+    const children = childrenMap.get(goal.id) || []
+    const hasChildren = children.length > 0
+    const isExpanded = expandedGoals.has(goal.id)
+    
+    return (
+      <div key={goal.id} style={{ marginLeft: depth * 24 }}>
+        <div className="flex items-center gap-1">
+          {hasChildren && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 w-6 p-0"
+              onClick={(e) => {
+                e.stopPropagation()
+                const newExpanded = new Set(expandedGoals)
+                if (isExpanded) {
+                  newExpanded.delete(goal.id)
+                } else {
+                  newExpanded.add(goal.id)
+                }
+                setExpandedGoals(newExpanded)
+              }}
+            >
+              <ChevronRight className={cn(
+                "h-4 w-4 transition-transform",
+                isExpanded && "rotate-90"
+              )} />
+            </Button>
+          )}
+          {!hasChildren && <div className="w-7" />}
+          <div className="flex-1">
+            <GoalCard goal={goal} onClick={() => onGoalClick(goal.id)} />
+          </div>
+        </div>
+        {hasChildren && isExpanded && (
+          <div className="mt-2 space-y-2">
+            {children.map((child: GoalSummary) => renderGoalTree(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   if (loading) {
     return (
@@ -114,23 +193,36 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
               className="gap-1.5"
             >
               {option.label}
+              {option.value === 'ready' && <CheckCircle className="h-3 w-3" />}
               <Badge variant={filter === option.value ? 'secondary' : 'outline'} className="ml-1">
                 {option.count}
               </Badge>
             </Button>
           ))}
         </div>
-        <Select value={sort} onValueChange={(v) => setSort(v as SortType)}>
-          <SelectTrigger className="w-[140px]">
-            <SelectValue placeholder="Sort by" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="newest">Newest</SelectItem>
-            <SelectItem value="oldest">Oldest</SelectItem>
-            <SelectItem value="status">Status</SelectItem>
-            <SelectItem value="questions">Questions</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Button
+            variant={treeView ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setTreeView(!treeView)}
+            className="gap-1.5"
+            title="Toggle tree view"
+          >
+            <GitFork className="h-4 w-4" />
+            Tree
+          </Button>
+          <Select value={sort} onValueChange={(v) => setSort(v as SortType)}>
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="newest">Newest</SelectItem>
+              <SelectItem value="oldest">Oldest</SelectItem>
+              <SelectItem value="status">Status</SelectItem>
+              <SelectItem value="questions">Questions</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Goals List */}
@@ -144,9 +236,15 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
       ) : (
         <div className="space-y-3">
           {/* Active/Iced Goals */}
-          {activeAndIcedGoals.map(goal => (
-            <GoalCard key={goal.id} goal={goal} onClick={() => onGoalClick(goal.id)} />
-          ))}
+          {treeView ? (
+            // Tree view
+            rootGoals.map(goal => renderGoalTree(goal))
+          ) : (
+            // Flat view
+            activeAndIcedGoals.map(goal => (
+              <GoalCard key={goal.id} goal={goal} onClick={() => onGoalClick(goal.id)} />
+            ))
+          )}
 
           {/* Completed Goals (Collapsible) */}
           {completedGoals.length > 0 && (filter === 'all' || filter === 'completed') && (
