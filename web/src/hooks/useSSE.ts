@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { toast } from '@/hooks/useToast'
 
 export interface SSEHandlers {
-  onQuestion?: () => void
+  onQuestion?: (data: { goal_id: string; question: string }) => void
   onAnswered?: (data: { id: string }) => void
   onExecutorStarted?: (data: { goal_id: string; session_id: string }) => void
   onExecutorStopped?: (data: { goal_id: string; session_id: string; reason?: string; output?: string }) => void
@@ -49,8 +49,9 @@ export function useSSE(handlers: SSEHandlers) {
       wasConnectedRef.current = true
     })
 
-    eventSource.addEventListener('question', () => {
-      handlersRef.current.onQuestion?.()
+    eventSource.addEventListener('question', (e) => {
+      const data = JSON.parse(e.data)
+      handlersRef.current.onQuestion?.({ goal_id: data.goal_id, question: data.question })
     })
 
     eventSource.addEventListener('answered', (e) => {

@@ -47,12 +47,27 @@ function AppContent() {
   const [selectedProject, setSelectedProject] = useState<ProjectStats | null>(null)
 
   // SSE handlers
-  const handleQuestion = useCallback(() => {
-    recordQuestion()
+  const handleQuestion = useCallback((data: { goal_id: string; question: string }) => {
+    recordQuestion(data.goal_id)
+    // Truncate question for toast
+    const shortQuestion = data.question.length > 60 
+      ? data.question.substring(0, 60) + '...' 
+      : data.question
     toast({
-      title: 'New Question',
-      description: 'An executor is waiting for your answer',
+      title: `Question from Goal #${data.goal_id}`,
+      description: shortQuestion,
       variant: 'destructive',
+      action: (
+        <button
+          className="shrink-0 rounded bg-white/20 px-3 py-1.5 text-sm font-medium hover:bg-white/30"
+          onClick={() => {
+            fetchGoalDetail(data.goal_id)
+            setSheetOpen(true)
+          }}
+        >
+          Answer
+        </button>
+      ),
     })
     fetchGoals()
     if (selectedGoal) {

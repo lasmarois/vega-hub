@@ -50,7 +50,10 @@ export function useActivity() {
   }, [addActivity])
 
   const recordQuestion = useCallback((goalId?: string) => {
-    addActivity('question', 'New question needs answer', goalId)
+    const message = goalId 
+      ? `Question from Goal #${goalId}` 
+      : 'New question needs answer'
+    addActivity('question', message, goalId)
   }, [addActivity])
 
   const recordAnswered = useCallback((goalId?: string) => {
