@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Target, ChevronDown, Plus, AlertTriangle } from 'lucide-react'
+import { Target, ChevronDown, Plus, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 import type { GoalSummary, Project } from '@/lib/types'
@@ -209,12 +209,18 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
 
 function GoalCard({ goal, onClick }: { goal: GoalSummary; onClick: () => void }) {
   const phaseInfo = parsePhase(goal.phase)
+  const completionStatus = goal.completion_status
+
+  // Determine if goal appears ready to complete
+  const appearsComplete = completionStatus?.complete && goal.status === 'active'
+  const hasHighConfidence = completionStatus && completionStatus.confidence >= 0.7 && !completionStatus.complete
 
   return (
     <Card
       className={cn(
         "cursor-pointer hover:bg-accent/50 transition-colors",
-        goal.status === 'completed' && "opacity-60"
+        goal.status === 'completed' && "opacity-60",
+        appearsComplete && "ring-2 ring-green-500/50"
       )}
       onClick={onClick}
     >
@@ -234,6 +240,19 @@ function GoalCard({ goal, onClick }: { goal: GoalSummary; onClick: () => void })
             <CardTitle className="text-base">#{goal.id}</CardTitle>
           </div>
           <div className="flex items-center gap-2">
+            {/* Ready to Complete badge */}
+            {appearsComplete && (
+              <Badge variant="success" className="gap-1">
+                <CheckCircle2 className="h-3 w-3" />
+                Ready
+              </Badge>
+            )}
+            {/* High confidence badge when not quite complete */}
+            {hasHighConfidence && (
+              <Badge variant="warning" className="gap-1" title={`${Math.round(completionStatus.confidence * 100)}% confidence`}>
+                Almost Ready
+              </Badge>
+            )}
             <Badge variant={
               goal.status === 'completed' ? 'success' :
               goal.status === 'iced' ? 'secondary' :
@@ -262,6 +281,12 @@ function GoalCard({ goal, onClick }: { goal: GoalSummary; onClick: () => void })
                   <AlertTriangle className="h-3 w-3 text-yellow-500" />
                 </span>
               )}
+            </span>
+          )}
+          {/* Completion progress indicator */}
+          {completionStatus && completionStatus.total_phases > 0 && (
+            <span className="flex items-center gap-1">
+              {completionStatus.completed_phases}/{completionStatus.total_phases} phases done
             </span>
           )}
         </div>

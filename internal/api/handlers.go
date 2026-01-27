@@ -504,6 +504,8 @@ type GoalDetailResponse struct {
 	State        string     `json:"state,omitempty"`         // Current state from StateManager
 	StateSince   *time.Time `json:"state_since,omitempty"`   // Timestamp of last state change
 	StateHistory []goals.StateEvent `json:"state_history,omitempty"` // Full history (if requested via ?history=true)
+	// Completion status from task_plan.md
+	CompletionStatus *goals.CompletionStatus `json:"completion_status,omitempty"`
 }
 
 // GoalStateResponse is the response for GET /api/goals/:id/state
@@ -604,6 +606,8 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleDeleteGoal(h, p, id)(w, r)
 		case "state":
 			handleGoalState(h, id)(w, r)
+		case "completion-status":
+			handleGoalCompletionStatus(h, p, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -717,6 +721,11 @@ func handleGoalDetail(h *hub.Hub, p *goals.Parser, id string) http.HandlerFunc {
 			}
 		}
 
+		// Get completion status from task_plan.md
+		if completionStatus, err := goals.IsGoalComplete(id, p.Dir()); err == nil {
+			response.CompletionStatus = completionStatus
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
 	}
@@ -763,6 +772,48 @@ func handleGoalState(h *hub.Hub, goalID string) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// GoalCompletionStatusResponse is the response for GET /api/goals/:id/completion-status
+type GoalCompletionStatusResponse struct {
+	GoalID string                  `json:"goal_id"`
+	*goals.CompletionStatus
+	Error  string                  `json:"error,omitempty"`
+}
+
+// handleGoalCompletionStatus handles GET /api/goals/:id/completion-status
+func handleGoalCompletionStatus(h *hub.Hub, p *goals.Parser, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		completionStatus, err := goals.IsGoalComplete(goalID, p.Dir())
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			if os.IsNotExist(err) {
+				// Task plan not found - return empty status
+				json.NewEncoder(w).Encode(GoalCompletionStatusResponse{
+					GoalID: goalID,
+					Error:  "task_plan.md not found",
+				})
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(GoalCompletionStatusResponse{
+				GoalID: goalID,
+				Error:  err.Error(),
+			})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(GoalCompletionStatusResponse{
+			GoalID:           goalID,
+			CompletionStatus: completionStatus,
+		})
 	}
 }
 
