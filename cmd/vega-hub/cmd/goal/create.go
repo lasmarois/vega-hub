@@ -15,6 +15,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// stateManager is initialized during create for state transitions
+var stateManager *goals.StateManager
+
 var (
 	createBaseBranch string
 	createNoWorktree bool
@@ -121,6 +124,20 @@ func runCreate(c *cobra.Command, args []string) {
 			nil)
 	}
 
+	// Initialize state manager for tracking goal state
+	stateManager = goals.NewStateManager(vegaDir)
+
+	// Transition to pending state (goal creation starting)
+	if err := stateManager.Transition(goalID, goals.StatePending, "Goal created", map[string]string{
+		"title":   title,
+		"project": project,
+	}); err != nil {
+		cli.OutputError(cli.ExitInternalError, "state_transition_failed",
+			"Failed to initialize goal state",
+			map[string]string{"error": err.Error()},
+			nil)
+	}
+
 	// Create slug from title for branch name
 	slug := slugify(title)
 	goalBranch := fmt.Sprintf("goal-%s-%s", goalID, slug)
@@ -163,8 +180,24 @@ func runCreate(c *cobra.Command, args []string) {
 	// Create worktree (unless --no-worktree)
 	var worktreePath string
 	if !createNoWorktree {
+		// Transition to branching state
+		if err := stateManager.Transition(goalID, goals.StateBranching, "Creating worktree", map[string]string{
+			"branch":      goalBranch,
+			"base_branch": baseBranch,
+		}); err != nil {
+			doRollback()
+			cli.OutputError(cli.ExitInternalError, "state_transition_failed",
+				"Failed to transition to branching state",
+				map[string]string{"error": err.Error()},
+				nil)
+		}
+
 		worktreePath = filepath.Join(vegaDir, "workspaces", project, fmt.Sprintf("goal-%s-%s", goalID, slug))
 		if err := createWorktree(projectBase, worktreePath, goalBranch, baseBranch); err != nil {
+			// Transition to failed state
+			stateManager.Transition(goalID, goals.StateFailed, "Worktree creation failed", map[string]string{
+				"error": err.Error(),
+			})
 			doRollback()
 			cli.OutputError(cli.ExitStateError, "worktree_failed",
 				"Failed to create worktree",
@@ -185,6 +218,21 @@ func runCreate(c *cobra.Command, args []string) {
 		if err := setupWorktreeEnvironment(vegaDir, worktreePath); err != nil {
 			// Non-fatal: warn but continue
 			cli.Warn("Failed to copy hooks to worktree: %v", err)
+		}
+
+		// Transition to working state - goal is ready for development
+		if err := stateManager.Transition(goalID, goals.StateWorking, "Worktree ready", map[string]string{
+			"worktree": worktreePath,
+		}); err != nil {
+			cli.Warn("Failed to transition to working state: %v", err)
+		}
+	} else {
+		// No worktree - transition directly to working (for research/planning goals)
+		if err := stateManager.Transition(goalID, goals.StateBranching, "No worktree requested", nil); err != nil {
+			cli.Warn("Failed to transition to branching state: %v", err)
+		}
+		if err := stateManager.Transition(goalID, goals.StateWorking, "Goal ready (no worktree)", nil); err != nil {
+			cli.Warn("Failed to transition to working state: %v", err)
 		}
 	}
 

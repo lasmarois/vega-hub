@@ -82,6 +82,13 @@ func runServe(cmd *cobra.Command, args []string) {
 	h.SetPort(servePort) // Store port for executor env injection
 	p := goals.NewParser(dir)
 
+	// Check for stuck goals on startup (recovery logic)
+	log.Println("Checking for stuck goals...")
+	stuckInfo := h.RecoverStuckGoals()
+	if stuckInfo.Count > 0 {
+		log.Printf("WARNING: %d goal(s) appear stuck - check /api/health for details", stuckInfo.Count)
+	}
+
 	// Start file watcher for real-time updates
 	if dir != "" {
 		if err := h.StartFileWatcher(); err != nil {

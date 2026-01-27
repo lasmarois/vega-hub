@@ -45,6 +45,27 @@ export interface BranchInfo {
   worktree_path?: string
 }
 
+// GoalState represents the lifecycle state of a goal
+export type GoalState = 
+  | 'pending'    // Created, not yet branched
+  | 'branching'  // Creating branch/worktree
+  | 'working'    // Active development
+  | 'pushing'    // Committing/pushing changes
+  | 'merging'    // Merging to target branch
+  | 'done'       // Successfully completed
+  | 'iced'       // Paused/frozen
+  | 'failed'     // Failed (recoverable)
+  | 'conflict'   // Merge conflict detected
+
+export interface StateEvent {
+  ts: string
+  state: GoalState
+  prev_state?: GoalState
+  reason?: string
+  user?: string
+  details?: Record<string, string>
+}
+
 export interface GoalDetail {
   id: string
   title: string
@@ -64,6 +85,10 @@ export interface GoalDetail {
   worktree_status?: 'exists' | 'missing' | 'never_created'
   branch_status?: 'local' | 'remote_only' | 'missing'
   can_recreate?: boolean
+  // State machine fields
+  state?: GoalState
+  state_since?: string
+  state_history?: StateEvent[]
 }
 
 export interface GoalStatus {

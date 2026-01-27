@@ -3,12 +3,14 @@ package hub
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/lasmarois/vega-hub/internal/goals"
 	"github.com/lasmarois/vega-hub/internal/markdown"
 )
 
@@ -35,6 +37,9 @@ type Hub struct {
 
 	// Session history for persistent storage
 	history *SessionHistory
+
+	// Goal state machine manager
+	stateManager *goals.StateManager
 }
 
 // UserMessage represents a message from a user to an executor
@@ -95,7 +100,70 @@ func New(dir string) *Hub {
 		subscribers:  make(map[chan Event]bool),
 		mdWriter:     markdown.NewWriter(dir),
 		history:      NewSessionHistory(dir),
+		stateManager: goals.NewStateManager(dir),
 	}
+}
+
+// StateManager returns the goal state manager
+func (h *Hub) StateManager() *goals.StateManager {
+	return h.stateManager
+}
+
+// StuckGoalsInfo contains information about stuck goals for health checks
+type StuckGoalsInfo struct {
+	Count     int               `json:"count"`
+	Goals     []goals.StuckGoal `json:"goals,omitempty"`
+	Threshold time.Duration     `json:"-"`
+}
+
+// RecoverStuckGoals checks for goals stuck in transient states and logs warnings.
+// This should be called on startup to detect goals that may have failed mid-operation.
+// Returns info about stuck goals for health reporting.
+func (h *Hub) RecoverStuckGoals() *StuckGoalsInfo {
+	const stuckThreshold = 1 * time.Hour
+
+	stuck, err := h.stateManager.StuckGoals(stuckThreshold)
+	if err != nil {
+		log.Printf("[RECOVERY] Error checking for stuck goals: %v", err)
+		return &StuckGoalsInfo{Count: 0, Threshold: stuckThreshold}
+	}
+
+	info := &StuckGoalsInfo{
+		Count:     len(stuck),
+		Goals:     stuck,
+		Threshold: stuckThreshold,
+	}
+
+	if len(stuck) == 0 {
+		log.Printf("[RECOVERY] No stuck goals found")
+		return info
+	}
+
+	// Log warnings for each stuck goal
+	log.Printf("[RECOVERY] WARNING: Found %d stuck goals (in transient state for >%v):", len(stuck), stuckThreshold)
+	for _, sg := range stuck {
+		log.Printf("[RECOVERY]   - Goal %s: stuck in '%s' since %s (duration: %v)",
+			sg.GoalID, sg.State, sg.Since.Format(time.RFC3339), sg.Duration.Round(time.Minute))
+
+		// TODO: Add webhook/notification integration here
+		// Example: h.notifyStuckGoal(sg)
+	}
+
+	// Broadcast event for stuck goals detected
+	h.broadcast(Event{
+		Type: "stuck_goals_detected",
+		Data: map[string]interface{}{
+			"count": len(stuck),
+			"goals": stuck,
+		},
+	})
+
+	return info
+}
+
+// GetStuckGoals returns current stuck goals without logging (for health checks)
+func (h *Hub) GetStuckGoals(threshold time.Duration) ([]goals.StuckGoal, error) {
+	return h.stateManager.StuckGoals(threshold)
 }
 
 // SetPort sets the port vega-hub is running on (for executor env injection)

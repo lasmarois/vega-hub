@@ -319,3 +319,114 @@ func TestReadLastLines_FileNotFound(t *testing.T) {
 		t.Errorf("expected empty string for nonexistent file, got %q", result)
 	}
 }
+
+func TestRecoverStuckGoals_NoStuckGoals(t *testing.T) {
+	h := setupTestHub(t)
+
+	// Create goals directory structure
+	goalsDir := h.dir + "/goals/active"
+	if err := os.MkdirAll(goalsDir, 0755); err != nil {
+		t.Fatalf("failed to create goals dir: %v", err)
+	}
+
+	// RecoverStuckGoals should return 0 stuck goals
+	info := h.RecoverStuckGoals()
+
+	if info == nil {
+		t.Fatal("expected non-nil StuckGoalsInfo")
+	}
+	if info.Count != 0 {
+		t.Errorf("expected 0 stuck goals, got %d", info.Count)
+	}
+}
+
+func TestRecoverStuckGoals_WithStuckGoal(t *testing.T) {
+	h := setupTestHub(t)
+
+	// Create goals directory structure
+	goalsDir := h.dir + "/goals/active"
+	if err := os.MkdirAll(goalsDir, 0755); err != nil {
+		t.Fatalf("failed to create goals dir: %v", err)
+	}
+
+	// Create a goal file
+	goalID := "abc1234"
+	goalFile := goalsDir + "/" + goalID + ".md"
+	if err := os.WriteFile(goalFile, []byte("# Goal"), 0644); err != nil {
+		t.Fatalf("failed to create goal file: %v", err)
+	}
+
+	// Create a state file with an old timestamp (stuck in branching for 2 hours)
+	stateFile := goalsDir + "/" + goalID + ".state.jsonl"
+	oldTime := time.Now().UTC().Add(-2 * time.Hour)
+	stateContent := `{"ts":"` + oldTime.Format(time.RFC3339Nano) + `","state":"branching","reason":"Creating worktree"}` + "\n"
+	if err := os.WriteFile(stateFile, []byte(stateContent), 0644); err != nil {
+		t.Fatalf("failed to create state file: %v", err)
+	}
+
+	// RecoverStuckGoals should detect the stuck goal
+	info := h.RecoverStuckGoals()
+
+	if info == nil {
+		t.Fatal("expected non-nil StuckGoalsInfo")
+	}
+	if info.Count != 1 {
+		t.Errorf("expected 1 stuck goal, got %d", info.Count)
+	}
+	if len(info.Goals) != 1 {
+		t.Fatalf("expected 1 goal in list, got %d", len(info.Goals))
+	}
+	if info.Goals[0].GoalID != goalID {
+		t.Errorf("expected goal ID '%s', got '%s'", goalID, info.Goals[0].GoalID)
+	}
+	if string(info.Goals[0].State) != "branching" {
+		t.Errorf("expected state 'branching', got '%s'", info.Goals[0].State)
+	}
+}
+
+func TestGetStuckGoals(t *testing.T) {
+	h := setupTestHub(t)
+
+	// Create goals directory structure
+	goalsDir := h.dir + "/goals/active"
+	if err := os.MkdirAll(goalsDir, 0755); err != nil {
+		t.Fatalf("failed to create goals dir: %v", err)
+	}
+
+	// Create a goal that's stuck
+	goalID := "def5678"
+	goalFile := goalsDir + "/" + goalID + ".md"
+	os.WriteFile(goalFile, []byte("# Goal"), 0644)
+
+	stateFile := goalsDir + "/" + goalID + ".state.jsonl"
+	oldTime := time.Now().UTC().Add(-90 * time.Minute) // 90 minutes ago
+	stateContent := `{"ts":"` + oldTime.Format(time.RFC3339Nano) + `","state":"pushing","reason":"Pushing changes"}` + "\n"
+	os.WriteFile(stateFile, []byte(stateContent), 0644)
+
+	// Test with 1-hour threshold - should find 1 stuck goal
+	stuck, err := h.GetStuckGoals(1 * time.Hour)
+	if err != nil {
+		t.Fatalf("GetStuckGoals failed: %v", err)
+	}
+	if len(stuck) != 1 {
+		t.Errorf("expected 1 stuck goal with 1h threshold, got %d", len(stuck))
+	}
+
+	// Test with 2-hour threshold - should find 0 stuck goals
+	stuck, err = h.GetStuckGoals(2 * time.Hour)
+	if err != nil {
+		t.Fatalf("GetStuckGoals failed: %v", err)
+	}
+	if len(stuck) != 0 {
+		t.Errorf("expected 0 stuck goals with 2h threshold, got %d", len(stuck))
+	}
+}
+
+func TestStateManager(t *testing.T) {
+	h := setupTestHub(t)
+
+	sm := h.StateManager()
+	if sm == nil {
+		t.Error("StateManager should not be nil")
+	}
+}

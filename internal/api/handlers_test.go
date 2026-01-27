@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/lasmarois/vega-hub/internal/goals"
 	"github.com/lasmarois/vega-hub/internal/hub"
@@ -72,20 +73,78 @@ Test goal for API testing.
 }
 
 func TestHandleHealth(t *testing.T) {
+	h, _, _ := setupTestEnv(t)
+
 	req := httptest.NewRequest("GET", "/api/health", nil)
 	w := httptest.NewRecorder()
 
-	handler := handleHealth()
+	handler := handleHealth(h)
 	handler(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
 
-	var response map[string]string
+	var response HealthResponse
 	json.Unmarshal(w.Body.Bytes(), &response)
-	if response["status"] != "ok" {
-		t.Errorf("expected status 'ok', got '%s'", response["status"])
+	if response.Status != "ok" {
+		t.Errorf("expected status 'ok', got '%s'", response.Status)
+	}
+}
+
+func TestHandleHealth_WithStuckGoals(t *testing.T) {
+	h, _, dir := setupTestEnv(t)
+
+	// Create a goal that's stuck in branching state for >1 hour
+	goalID := "abc1234"
+	goalsDir := filepath.Join(dir, "goals", "active")
+
+	// Write state file with old timestamp (2 hours ago)
+	stateFile := filepath.Join(goalsDir, goalID+".state.jsonl")
+	oldTime := time.Now().UTC().Add(-2 * time.Hour)
+	event := goals.StateEvent{
+		Timestamp: oldTime,
+		State:     goals.StateBranching,
+		Reason:    "Creating worktree",
+	}
+	data, _ := json.Marshal(event)
+	os.WriteFile(stateFile, append(data, '\n'), 0644)
+
+	req := httptest.NewRequest("GET", "/api/health", nil)
+	w := httptest.NewRecorder()
+
+	handler := handleHealth(h)
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var response HealthResponse
+	json.Unmarshal(w.Body.Bytes(), &response)
+	
+	if response.Status != "degraded" {
+		t.Errorf("expected status 'degraded' with stuck goals, got '%s'", response.Status)
+	}
+
+	if response.StuckGoals == nil {
+		t.Fatal("expected stuck_goals in response")
+	}
+
+	if response.StuckGoals.Count != 1 {
+		t.Errorf("expected 1 stuck goal, got %d", response.StuckGoals.Count)
+	}
+
+	if len(response.StuckGoals.Goals) != 1 {
+		t.Errorf("expected 1 goal in list, got %d", len(response.StuckGoals.Goals))
+	}
+
+	if response.StuckGoals.Goals[0].GoalID != goalID {
+		t.Errorf("expected goal ID '%s', got '%s'", goalID, response.StuckGoals.Goals[0].GoalID)
+	}
+
+	if response.StuckGoals.Goals[0].State != "branching" {
+		t.Errorf("expected state 'branching', got '%s'", response.StuckGoals.Goals[0].State)
 	}
 }
 

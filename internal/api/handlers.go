@@ -28,7 +28,7 @@ func RegisterRoutes(mux *http.ServeMux, h *hub.Hub, p *goals.Parser) {
 	mux.HandleFunc("/api/executor/register", corsMiddleware(handleExecutorRegister(h)))
 	mux.HandleFunc("/api/executor/stop", corsMiddleware(handleExecutorStop(h)))
 	mux.HandleFunc("/api/events", handleSSE(h))
-	mux.HandleFunc("/api/health", handleHealth())
+	mux.HandleFunc("/api/health", handleHealth(h))
 	mux.HandleFunc("/api/goals", corsMiddleware(handleGoalsRoot(h, p)))
 	mux.HandleFunc("/api/goals/", corsMiddleware(handleGoalRoutes(h, p)))
 	mux.HandleFunc("/api/projects", corsMiddleware(handleProjects(h)))
@@ -135,11 +135,56 @@ func handleQuestions(h *hub.Hub) http.HandlerFunc {
 	}
 }
 
-// handleHealth handles GET /api/health
-func handleHealth() http.HandlerFunc {
+// HealthResponse represents the health check response
+type HealthResponse struct {
+	Status     string             `json:"status"`              // "ok" or "degraded"
+	StuckGoals *StuckGoalsHealth  `json:"stuck_goals,omitempty"`
+}
+
+// StuckGoalsHealth contains stuck goal info for health response
+type StuckGoalsHealth struct {
+	Count int                 `json:"count"`
+	Goals []StuckGoalSummary  `json:"goals,omitempty"`
+}
+
+// StuckGoalSummary is a summary of a stuck goal for health response
+type StuckGoalSummary struct {
+	GoalID   string `json:"goal_id"`
+	State    string `json:"state"`
+	Since    string `json:"since"`
+	Duration string `json:"duration"`
+}
+
+// handleHealth handles GET /api/health - includes stuck goals check
+func handleHealth(h *hub.Hub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		response := HealthResponse{
+			Status: "ok",
+		}
+
+		// Check for stuck goals (goals in transient state for >1 hour)
+		stuckGoals, err := h.GetStuckGoals(1 * time.Hour)
+		if err == nil && len(stuckGoals) > 0 {
+			response.Status = "degraded"
+
+			summaries := make([]StuckGoalSummary, 0, len(stuckGoals))
+			for _, sg := range stuckGoals {
+				summaries = append(summaries, StuckGoalSummary{
+					GoalID:   sg.GoalID,
+					State:    string(sg.State),
+					Since:    sg.Since.Format(time.RFC3339),
+					Duration: sg.Duration.Round(time.Minute).String(),
+				})
+			}
+
+			response.StuckGoals = &StuckGoalsHealth{
+				Count: len(stuckGoals),
+				Goals: summaries,
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		json.NewEncoder(w).Encode(response)
 	}
 }
 
@@ -454,6 +499,19 @@ type GoalDetailResponse struct {
 	WorktreeStatus   string          `json:"worktree_status,omitempty"`  // "exists", "missing", "never_created"
 	BranchStatus     string          `json:"branch_status,omitempty"`    // "local", "remote_only", "missing"
 	CanRecreate      bool            `json:"can_recreate,omitempty"`     // true if branch exists somewhere
+	// State machine fields
+	State        string     `json:"state,omitempty"`         // Current state from StateManager
+	StateSince   *time.Time `json:"state_since,omitempty"`   // Timestamp of last state change
+	StateHistory []goals.StateEvent `json:"state_history,omitempty"` // Full history (if requested via ?history=true)
+}
+
+// GoalStateResponse is the response for GET /api/goals/:id/state
+type GoalStateResponse struct {
+	GoalID       string              `json:"goal_id"`
+	State        goals.GoalState     `json:"state"`
+	StateSince   *time.Time          `json:"state_since,omitempty"`
+	LastEvent    *goals.StateEvent   `json:"last_event,omitempty"`
+	StateHistory []goals.StateEvent  `json:"state_history,omitempty"` // Only if ?history=true
 }
 
 // SpawnRequest is the request body for POST /api/goals/:id/spawn
@@ -543,6 +601,8 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			handleCreateWorktree(h, p, id)(w, r)
 		case "delete":
 			handleDeleteGoal(h, p, id)(w, r)
+		case "state":
+			handleGoalState(h, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -637,6 +697,67 @@ func handleGoalDetail(h *hub.Hub, p *goals.Parser, id string) http.HandlerFunc {
 		} else {
 			// No worktree metadata - never created or legacy goal
 			response.WorktreeStatus = "never_created"
+		}
+
+		// Get state machine info
+		sm := h.StateManager()
+		if sm != nil {
+			if state, err := sm.GetState(id); err == nil {
+				response.State = string(state)
+			}
+			if lastEvent, err := sm.GetLastEvent(id); err == nil && lastEvent != nil {
+				response.StateSince = &lastEvent.Timestamp
+			}
+			// Include full history if requested
+			if r.URL.Query().Get("history") == "true" {
+				if history, err := sm.GetHistory(id); err == nil {
+					response.StateHistory = history
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// handleGoalState handles GET /api/goals/:id/state - returns goal state info
+func handleGoalState(h *hub.Hub, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		sm := h.StateManager()
+		if sm == nil {
+			http.Error(w, "State manager not initialized", http.StatusInternalServerError)
+			return
+		}
+
+		// Get current state
+		state, err := sm.GetState(goalID)
+		if err != nil {
+			http.Error(w, "Failed to get state: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		response := GoalStateResponse{
+			GoalID: goalID,
+			State:  state,
+		}
+
+		// Get last event for timestamp
+		if lastEvent, err := sm.GetLastEvent(goalID); err == nil && lastEvent != nil {
+			response.StateSince = &lastEvent.Timestamp
+			response.LastEvent = lastEvent
+		}
+
+		// Include full history if requested
+		if r.URL.Query().Get("history") == "true" {
+			if history, err := sm.GetHistory(goalID); err == nil {
+				response.StateHistory = history
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")

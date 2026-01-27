@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lasmarois/vega-hub/internal/cli"
+	"github.com/lasmarois/vega-hub/internal/goals"
 	"github.com/spf13/cobra"
 )
 
@@ -147,6 +148,9 @@ func runIce(c *cobra.Command, args []string) {
 	cli.Info("  Reason: %s", reason)
 	cli.Info("  Worktree: %s", worktreeDir)
 
+	// Initialize state manager
+	sm := goals.NewStateManager(vegaDir)
+
 	result := IceResult{
 		GoalID:          goalID,
 		Title:           goalTitle,
@@ -178,6 +182,13 @@ func runIce(c *cobra.Command, args []string) {
 	projectConfig := filepath.Join(vegaDir, "projects", project+".md")
 	if err := removeGoalFromProjectConfig(projectConfig, goalID); err != nil {
 		cli.Warn("Could not update project config: %v", err)
+	}
+
+	// Step 5: Transition state to iced
+	if err := sm.Transition(goalID, goals.StateIced, reason, map[string]string{
+		"branch": branchName,
+	}); err != nil {
+		cli.Warn("Failed to transition to iced state: %v", err)
 	}
 
 	// Build resume command

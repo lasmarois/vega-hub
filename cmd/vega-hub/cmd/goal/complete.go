@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lasmarois/vega-hub/internal/cli"
+	"github.com/lasmarois/vega-hub/internal/goals"
 	"github.com/spf13/cobra"
 )
 
@@ -158,6 +159,9 @@ func runComplete(c *cobra.Command, args []string) {
 	cli.Info("  Worktree: %s", worktreeDir)
 	cli.Info("  Branch: %s -> %s", branchName, baseBranch)
 
+	// Initialize state manager
+	sm := goals.NewStateManager(vegaDir)
+
 	result := CompleteResult{
 		GoalID:  goalID,
 		Title:   goalTitle,
@@ -166,8 +170,25 @@ func runComplete(c *cobra.Command, args []string) {
 
 	// Step 1: Merge branch (unless --no-merge)
 	if !completeNoMerge {
+		// Transition to pushing state
+		if err := sm.Transition(goalID, goals.StatePushing, "Starting completion", map[string]string{
+			"branch":      branchName,
+			"base_branch": baseBranch,
+		}); err != nil {
+			cli.Warn("Failed to transition to pushing state: %v", err)
+		}
+
+		// Transition to merging state
 		cli.Info("Merging %s to %s...", branchName, baseBranch)
+		if err := sm.Transition(goalID, goals.StateMerging, "Merging to base branch", nil); err != nil {
+			cli.Warn("Failed to transition to merging state: %v", err)
+		}
+
 		if err := mergeBranch(projectBase, branchName, baseBranch, goalID, goalTitle); err != nil {
+			// Transition to conflict state on merge failure
+			sm.Transition(goalID, goals.StateConflict, "Merge conflict detected", map[string]string{
+				"error": err.Error(),
+			})
 			cli.OutputError(cli.ExitConflict, "merge_failed",
 				"Merge failed",
 				map[string]string{
@@ -186,6 +207,12 @@ func runComplete(c *cobra.Command, args []string) {
 	} else {
 		cli.Info("Skipping merge (--no-merge specified)")
 		cli.Info("Remember to create MR/PR for branch: %s", branchName)
+		// Transition to pushing state (waiting for MR/PR)
+		if err := sm.Transition(goalID, goals.StatePushing, "Awaiting MR/PR merge", map[string]string{
+			"branch": branchName,
+		}); err != nil {
+			cli.Warn("Failed to transition to pushing state: %v", err)
+		}
 	}
 
 	// Step 2: Remove worktree
@@ -229,6 +256,19 @@ func runComplete(c *cobra.Command, args []string) {
 	projectConfig := filepath.Join(vegaDir, "projects", project+".md")
 	if err := completeGoalInProjectConfig(projectConfig, goalID, goalTitle); err != nil {
 		cli.Warn("Could not update project config: %v", err)
+	}
+
+	// Step 7: Transition state to done (only if we actually merged)
+	if !completeNoMerge {
+		if err := sm.Transition(goalID, goals.StateDone, "Goal completed", map[string]string{
+			"merged_to": baseBranch,
+		}); err != nil {
+			cli.Warn("Failed to transition to done state: %v", err)
+		}
+		// Move state file to history
+		if err := sm.MoveStateFile(goalID, "active", "history"); err != nil {
+			cli.Warn("Failed to move state file to history: %v", err)
+		}
 	}
 
 	// Success output

@@ -27,9 +27,45 @@ import {
 } from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle, Info } from 'lucide-react'
+import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle, Info, Activity } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { GoalDetail, GoalStatus } from '@/lib/types'
+import type { GoalDetail, GoalStatus, GoalState } from '@/lib/types'
+
+// Helper to get badge variant and label for state
+function getStateInfo(state: GoalState): { variant: 'default' | 'secondary' | 'destructive' | 'success' | 'outline'; label: string; icon?: React.ReactNode } {
+  switch (state) {
+    case 'pending':
+      return { variant: 'secondary', label: 'Pending' }
+    case 'branching':
+      return { variant: 'default', label: 'Branching' }
+    case 'working':
+      return { variant: 'default', label: 'Working' }
+    case 'pushing':
+      return { variant: 'default', label: 'Pushing' }
+    case 'merging':
+      return { variant: 'default', label: 'Merging' }
+    case 'done':
+      return { variant: 'success', label: 'Done' }
+    case 'iced':
+      return { variant: 'secondary', label: 'Iced' }
+    case 'failed':
+      return { variant: 'destructive', label: 'Failed' }
+    case 'conflict':
+      return { variant: 'destructive', label: 'Conflict' }
+    default:
+      return { variant: 'outline', label: state }
+  }
+}
+
+function StateBadge({ state }: { state: GoalState }) {
+  const { variant, label } = getStateInfo(state)
+  return (
+    <Badge variant={variant} className="gap-1">
+      <Activity className="h-3 w-3" />
+      {label}
+    </Badge>
+  )
+}
 import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog, CreateMRDialog, RecreateWorktreeDialog, DeleteGoalDialog } from './GoalActions'
 import { ChatThread } from './ChatThread'
 
@@ -184,6 +220,17 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                 <span>{goal.projects.join(', ')}</span>
               )}
             </div>
+            {/* State Machine Badge */}
+            {goal.state && (
+              <div className="flex items-center gap-2 mt-2">
+                <StateBadge state={goal.state} />
+                {goal.state_since && (
+                  <span className="text-xs text-muted-foreground">
+                    since {new Date(goal.state_since).toLocaleString()}
+                  </span>
+                )}
+              </div>
+            )}
           </SheetHeader>
 
           {/* Action Bar */}
