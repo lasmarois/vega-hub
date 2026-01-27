@@ -20,9 +20,10 @@ import (
 var stateManager *goals.StateManager
 
 var (
-	createBaseBranch   string
-	createNoWorktree   bool
+	createBaseBranch    string
+	createNoWorktree    bool
 	createSkipPreflight bool
+	createParent        string
 )
 
 // CreateResult contains the result of creating a goal
@@ -34,6 +35,7 @@ type CreateResult struct {
 	GoalBranch   string `json:"goal_branch"`
 	WorktreePath string `json:"worktree_path,omitempty"`
 	GoalFile     string `json:"goal_file"`
+	ParentID     string `json:"parent_id,omitempty"`
 }
 
 var createCmd = &cobra.Command{
@@ -45,10 +47,16 @@ Examples:
   vega-hub goal create "Add user authentication" my-api
   vega-hub goal create "Fix login bug" my-api --base-branch dev
   vega-hub goal create "Research caching" my-api --no-worktree
+  vega-hub goal create "Design API" my-api --parent abc123  # Create child goal
 
 The goal ID is a 7-character hash generated from a UUID.
-The worktree is created at workspaces/<project>/goal-<id>-<slug>/`,
-	Args: cobra.ExactArgs(2),
+For child goals (--parent), the ID is hierarchical: parent-id.N (e.g., abc123.1)
+The worktree is created at workspaces/<project>/goal-<id>-<slug>/
+
+Hierarchy:
+  Goals can have parent-child relationships up to 3 levels deep.
+  Child goals inherit the project from their parent by default.`,
+	Args: cobra.RangeArgs(1, 2),
 	Run:  runCreate,
 }
 
@@ -57,11 +65,17 @@ func init() {
 	createCmd.Flags().StringVar(&createBaseBranch, "base-branch", "", "Base branch (default: from project config)")
 	createCmd.Flags().BoolVar(&createNoWorktree, "no-worktree", false, "Create goal file and registry only, no worktree")
 	createCmd.Flags().BoolVar(&createSkipPreflight, "skip-preflight", false, "Skip pre-flight checks (escape hatch)")
+	createCmd.Flags().StringVar(&createParent, "parent", "", "Parent goal ID to create this as a child (hierarchical goal)")
 }
 
 func runCreate(c *cobra.Command, args []string) {
 	title := args[0]
-	project := args[1]
+	
+	// Project can be inferred from parent or must be provided
+	var project string
+	if len(args) > 1 {
+		project = args[1]
+	}
 
 	// Get vega-missile directory
 	vegaDir, err := cli.GetVegaDir()
@@ -69,6 +83,45 @@ func runCreate(c *cobra.Command, args []string) {
 		cli.OutputError(cli.ExitValidationError, "no_directory", err.Error(), nil, []cli.ErrorOption{
 			{Flag: "dir", Description: "Specify vega-missile directory explicitly"},
 		})
+	}
+
+	// Handle parent goal (hierarchical creation)
+	var parentDetail *goals.GoalDetail
+	if createParent != "" {
+		parser := goals.NewParser(vegaDir)
+		hm := goals.NewHierarchyManager(vegaDir)
+		
+		// Validate parent can have children
+		if err := hm.ValidateParentForChildCreation(createParent); err != nil {
+			cli.OutputError(cli.ExitValidationError, "invalid_parent", err.Error(),
+				map[string]string{"parent_id": createParent}, nil)
+		}
+		
+		// Get parent details for project inheritance
+		parentDetail, err = parser.ParseGoalDetail(createParent)
+		if err != nil {
+			cli.OutputError(cli.ExitNotFound, "parent_not_found",
+				fmt.Sprintf("Parent goal '%s' not found", createParent),
+				map[string]string{"parent_id": createParent}, nil)
+		}
+		
+		// Inherit project from parent if not specified
+		if project == "" {
+			if len(parentDetail.Projects) > 0 {
+				project = parentDetail.Projects[0]
+			} else {
+				cli.OutputError(cli.ExitValidationError, "no_project",
+					"No project specified and parent has no projects",
+					map[string]string{"parent_id": createParent}, nil)
+			}
+		}
+	}
+
+	// Project is required at this point
+	if project == "" {
+		cli.OutputError(cli.ExitValidationError, "project_required",
+			"Project is required (or use --parent to inherit from parent goal)",
+			nil, nil)
 	}
 
 	// Validate project exists
@@ -84,6 +137,8 @@ func runCreate(c *cobra.Command, args []string) {
 				{Action: "onboard", Description: fmt.Sprintf("Run: scripts/onboard-project.sh %s <git-url>", project)},
 			})
 	}
+	
+	_ = parentDetail // Used later for setting up hierarchy
 
 	// Get base branch from flag or project config
 	baseBranch := createBaseBranch
@@ -116,15 +171,32 @@ func runCreate(c *cobra.Command, args []string) {
 			})
 	}
 
-	// Generate unique goal ID (7-char hash from UUID)
-	// Uses UUID v4 for randomness, truncated to 7 chars for readability
-	// Collision probability is negligible for typical goal counts (<1000)
-	goalID, err := generateUniqueGoalID(vegaDir)
-	if err != nil {
-		cli.OutputError(cli.ExitInternalError, "id_generation_failed",
-			"Failed to generate unique goal ID",
-			map[string]string{"error": err.Error()},
-			nil)
+	// Generate goal ID
+	// For child goals: hierarchical ID (parent-id.N)
+	// For root goals: 7-char hash from UUID
+	var goalID string
+	hm := goals.NewHierarchyManager(vegaDir)
+	
+	if createParent != "" {
+		// Generate hierarchical child ID
+		goalID, err = hm.GenerateChildID(createParent)
+		if err != nil {
+			cli.OutputError(cli.ExitInternalError, "id_generation_failed",
+				"Failed to generate hierarchical goal ID",
+				map[string]string{"error": err.Error(), "parent_id": createParent},
+				nil)
+		}
+	} else {
+		// Generate unique root goal ID (7-char hash from UUID)
+		// Uses UUID v4 for randomness, truncated to 7 chars for readability
+		// Collision probability is negligible for typical goal counts (<1000)
+		goalID, err = generateUniqueGoalID(vegaDir)
+		if err != nil {
+			cli.OutputError(cli.ExitInternalError, "id_generation_failed",
+				"Failed to generate unique goal ID",
+				map[string]string{"error": err.Error()},
+				nil)
+		}
 	}
 
 	// Initialize state manager for tracking goal state
@@ -323,6 +395,13 @@ func runCreate(c *cobra.Command, args []string) {
 		cli.Warn("Failed to update project config: %v", err)
 	}
 
+	// Set up hierarchy relationship if this is a child goal
+	if createParent != "" {
+		if err := hm.CreateChildGoal(goalID, createParent); err != nil {
+			cli.Warn("Failed to set up hierarchy relationship: %v", err)
+		}
+	}
+
 	// Success output
 	result := CreateResult{
 		GoalID:       goalID,
@@ -332,6 +411,7 @@ func runCreate(c *cobra.Command, args []string) {
 		GoalBranch:   goalBranch,
 		WorktreePath: worktreePath,
 		GoalFile:     goalFile,
+		ParentID:     createParent,
 	}
 
 	nextSteps := []string{
@@ -351,7 +431,10 @@ func runCreate(c *cobra.Command, args []string) {
 
 	// Human-readable summary (non-JSON mode)
 	if !cli.JSONOutput {
-		fmt.Printf("\n  Project:     %s\n", project)
+		if createParent != "" {
+			fmt.Printf("\n  Parent:      %s\n", createParent)
+		}
+		fmt.Printf("  Project:     %s\n", project)
 		fmt.Printf("  Base branch: %s\n", baseBranch)
 		fmt.Printf("  Goal branch: %s\n", goalBranch)
 		if worktreePath != "" {

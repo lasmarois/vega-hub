@@ -12,12 +12,14 @@ import (
 
 // Goal represents a goal from the registry
 type Goal struct {
-	ID       string   `json:"id"` // Can be numeric ("10") or hash ("4fd584d")
+	ID       string   `json:"id"` // Can be numeric ("10"), hash ("4fd584d"), or hierarchical ("4fd584d.1")
 	Title    string   `json:"title"`
 	Projects []string `json:"projects"`
 	Status   string   `json:"status"` // "active", "iced", "completed"
 	Phase    string   `json:"phase"`  // e.g., "1/4" or "?"
 	Reason   string   `json:"reason,omitempty"` // For iced goals
+	ParentID string   `json:"parent_id,omitempty"` // Parent goal ID for hierarchical goals
+	Children []string `json:"children,omitempty"` // Child goal IDs (populated dynamically)
 }
 
 // Parser handles parsing of goal registry and detail files

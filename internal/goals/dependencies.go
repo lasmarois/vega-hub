@@ -32,9 +32,11 @@ type DependencyInfo struct {
 	Dependents []Dependency `json:"dependents"`
 }
 
-// GoalMetadata stores metadata for a goal, including dependencies
+// GoalMetadata stores metadata for a goal, including dependencies and hierarchy
 type GoalMetadata struct {
-	Dependencies []Dependency `json:"dependencies,omitempty"`
+	Dependencies   []Dependency `json:"dependencies,omitempty"`
+	ParentID       string       `json:"parent_id,omitempty"`        // Parent goal ID for hierarchical goals
+	NextChildIndex int          `json:"next_child_index,omitempty"` // Next index for child goals
 }
 
 // DependencyManager handles goal dependency operations

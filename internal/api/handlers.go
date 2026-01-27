@@ -314,6 +314,11 @@ type GoalSummary struct {
 	WorkspaceStatus  string                  `json:"workspace_status,omitempty"` // "ready", "missing", "error" (from project)
 	WorkspaceError   string                  `json:"workspace_error,omitempty"`  // Error message if workspace not ready
 	CompletionStatus *goals.CompletionStatus `json:"completion_status,omitempty"`
+	// Hierarchy fields
+	ParentID  string   `json:"parent_id,omitempty"`
+	Children  []string `json:"children,omitempty"`
+	Depth     int      `json:"depth"`
+	IsBlocked bool     `json:"is_blocked,omitempty"`
 }
 
 // CreateGoalRequest is the request body for POST /api/goals
@@ -321,6 +326,7 @@ type CreateGoalRequest struct {
 	Title      string `json:"title"`
 	Project    string `json:"project"`
 	BaseBranch string `json:"base_branch,omitempty"`
+	ParentID   string `json:"parent_id,omitempty"` // Parent goal ID for hierarchical goals
 }
 
 // CompleteGoalRequest is the request body for POST /api/goals/:id/complete
@@ -423,13 +429,26 @@ func handleGoals(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			error  string
 		})
 
+		// Initialize hierarchy manager
+		hm := goals.NewHierarchyManager(p.Dir())
+		dm := goals.NewDependencyManager(p.Dir())
+
 		// Build summaries
 		summaries := make([]GoalSummary, 0, len(registryGoals))
 		for _, g := range registryGoals {
+			// Get hierarchy info
+			parentID, _ := hm.GetParentID(g.ID)
+			children, _ := hm.GetChildren(g.ID)
+			isBlocked := dm.IsBlocked(g.ID)
+
 			summary := GoalSummary{
 				Goal:             g,
 				PendingQuestions: questionsByGoal[g.ID],
 				ActiveExecutors:  executorsByGoal[g.ID],
+				ParentID:         parentID,
+				Children:         children,
+				Depth:            hm.GetHierarchyDepth(g.ID),
+				IsBlocked:        isBlocked,
 			}
 
 			// Determine executor status
@@ -512,6 +531,11 @@ type GoalDetailResponse struct {
 	StateHistory []goals.StateEvent `json:"state_history,omitempty"` // Full history (if requested via ?history=true)
 	// Completion status from task_plan.md
 	CompletionStatus *goals.CompletionStatus `json:"completion_status,omitempty"`
+	// Hierarchy fields
+	ParentID  string   `json:"parent_id,omitempty"`
+	Children  []string `json:"children,omitempty"`
+	Depth     int      `json:"depth"`
+	IsBlocked bool     `json:"is_blocked,omitempty"`
 }
 
 // GoalStateResponse is the response for GET /api/goals/:id/state
@@ -628,6 +652,10 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 			} else {
 				handleGoalDependencies(p, id)(w, r)
 			}
+		case "children":
+			handleGoalChildren(p, id)(w, r)
+		case "hierarchy":
+			handleGoalHierarchy(p, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -745,6 +773,14 @@ func handleGoalDetail(h *hub.Hub, p *goals.Parser, id string) http.HandlerFunc {
 		if completionStatus, err := goals.IsGoalComplete(id, p.Dir()); err == nil {
 			response.CompletionStatus = completionStatus
 		}
+
+		// Get hierarchy info
+		hm := goals.NewHierarchyManager(p.Dir())
+		dm := goals.NewDependencyManager(p.Dir())
+		response.ParentID, _ = hm.GetParentID(id)
+		response.Children, _ = hm.GetChildren(id)
+		response.Depth = hm.GetHierarchyDepth(id)
+		response.IsBlocked = dm.IsBlocked(id)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
@@ -960,17 +996,19 @@ func handleCreateGoal(h *hub.Hub) http.HandlerFunc {
 			http.Error(w, "Title is required", http.StatusBadRequest)
 			return
 		}
-		if req.Project == "" {
-			http.Error(w, "Project is required", http.StatusBadRequest)
+		// Project is optional if parent_id is provided (will inherit from parent)
+		if req.Project == "" && req.ParentID == "" {
+			http.Error(w, "Project is required (or use parent_id to inherit from parent)", http.StatusBadRequest)
 			return
 		}
 
-		log.Printf("[CREATE] Creating goal: title=%q, project=%q, base_branch=%q", req.Title, req.Project, req.BaseBranch)
+		log.Printf("[CREATE] Creating goal: title=%q, project=%q, base_branch=%q, parent_id=%q", req.Title, req.Project, req.BaseBranch, req.ParentID)
 
 		result, data := operations.CreateGoal(operations.CreateOptions{
 			Title:      req.Title,
 			Project:    req.Project,
 			BaseBranch: req.BaseBranch,
+			ParentID:   req.ParentID,
 			VegaDir:    h.Dir(),
 		})
 
@@ -3176,6 +3214,119 @@ func handleGoalDependencyAction(p *goals.Parser, goalID, depID string) http.Hand
 			"removed": depID,
 		})
 	}
+}
+
+// ChildrenResponse is the response for GET /api/goals/:id/children
+type ChildrenResponse struct {
+	GoalID   string                    `json:"goal_id"`
+	Children []goals.GoalWithHierarchy `json:"children"`
+}
+
+// handleGoalChildren handles GET /api/goals/:id/children
+func handleGoalChildren(p *goals.Parser, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		hm := goals.NewHierarchyManager(p.Dir())
+
+		// Get child IDs
+		childIDs, err := hm.GetChildren(goalID)
+		if err != nil {
+			http.Error(w, "Failed to get children: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Get full details for each child
+		var children []goals.GoalWithHierarchy
+		for _, childID := range childIDs {
+			if child, err := hm.GetGoalWithHierarchy(childID); err == nil {
+				children = append(children, *child)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ChildrenResponse{
+			GoalID:   goalID,
+			Children: children,
+		})
+	}
+}
+
+// HierarchyResponse is the response for GET /api/goals/:id/hierarchy
+type HierarchyResponse struct {
+	GoalID   string                  `json:"goal_id"`
+	Goal     *goals.GoalWithHierarchy `json:"goal"`
+	Tree     *goals.GoalTreeNode      `json:"tree,omitempty"`  // If ?tree=true
+	Ancestors []goals.Goal             `json:"ancestors,omitempty"` // Parent chain to root
+}
+
+// handleGoalHierarchy handles GET /api/goals/:id/hierarchy
+func handleGoalHierarchy(p *goals.Parser, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		hm := goals.NewHierarchyManager(p.Dir())
+
+		// Get goal with hierarchy info
+		goal, err := hm.GetGoalWithHierarchy(goalID)
+		if err != nil {
+			http.Error(w, "Goal not found: "+err.Error(), http.StatusNotFound)
+			return
+		}
+
+		response := HierarchyResponse{
+			GoalID: goalID,
+			Goal:   goal,
+		}
+
+		// If ?tree=true, include the tree structure rooted at this goal
+		if r.URL.Query().Get("tree") == "true" {
+			trees, err := hm.BuildTree()
+			if err == nil {
+				// Find this goal's tree node
+				for _, tree := range trees {
+					if node := findTreeNode(tree, goalID); node != nil {
+						response.Tree = node
+						break
+					}
+				}
+			}
+		}
+
+		// Build ancestor chain
+		currentID := goal.ParentID
+		for currentID != "" {
+			if parent, err := p.ParseGoalDetail(currentID); err == nil {
+				response.Ancestors = append(response.Ancestors, parent.Goal)
+				parentParentID, _ := hm.GetParentID(currentID)
+				currentID = parentParentID
+			} else {
+				break
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// findTreeNode finds a node in the tree by goal ID
+func findTreeNode(node *goals.GoalTreeNode, goalID string) *goals.GoalTreeNode {
+	if node.Goal.ID == goalID {
+		return node
+	}
+	for _, child := range node.Children {
+		if found := findTreeNode(child, goalID); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 // handleReadyGoals handles GET /api/goals/ready

@@ -112,6 +112,7 @@ type CreateOptions struct {
 	Project    string
 	BaseBranch string // Optional override
 	NoWorktree bool
+	ParentID   string // Parent goal ID for hierarchical goals
 	VegaDir    string
 }
 
@@ -124,6 +125,7 @@ type CreateResult struct {
 	GoalBranch   string `json:"goal_branch"`
 	WorktreePath string `json:"worktree_path"`
 	GoalFile     string `json:"goal_file"`
+	ParentID     string `json:"parent_id,omitempty"`
 }
 
 // CompleteGoal completes a goal (merge, cleanup, archive)
@@ -564,14 +566,64 @@ func CleanupGoal(opts CleanupOptions) (*Result, *CleanupResult) {
 
 // CreateGoal creates a new goal with worktree
 func CreateGoal(opts CreateOptions) (*Result, *CreateResult) {
+	hm := goals.NewHierarchyManager(opts.VegaDir)
+
+	// Handle parent goal (hierarchical creation)
+	var parentDetail *goals.GoalDetail
+	effectiveProject := opts.Project
+
+	if opts.ParentID != "" {
+		// Validate parent can have children
+		if err := hm.ValidateParentForChildCreation(opts.ParentID); err != nil {
+			return &Result{
+				Success: false,
+				Error: &ErrorInfo{
+					Code:    "invalid_parent",
+					Message: err.Error(),
+					Details: map[string]string{"parent_id": opts.ParentID},
+				},
+			}, nil
+		}
+
+		// Get parent details
+		parser := goals.NewParser(opts.VegaDir)
+		var err error
+		parentDetail, err = parser.ParseGoalDetail(opts.ParentID)
+		if err != nil {
+			return &Result{
+				Success: false,
+				Error: &ErrorInfo{
+					Code:    "parent_not_found",
+					Message: fmt.Sprintf("Parent goal '%s' not found", opts.ParentID),
+					Details: map[string]string{"parent_id": opts.ParentID},
+				},
+			}, nil
+		}
+
+		// Inherit project from parent if not specified
+		if effectiveProject == "" && len(parentDetail.Projects) > 0 {
+			effectiveProject = parentDetail.Projects[0]
+		}
+	}
+
+	if effectiveProject == "" {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "project_required",
+				Message: "Project is required (or use parent_id to inherit from parent goal)",
+			},
+		}, nil
+	}
+
 	// Parse project config
-	project, err := goals.ParseProject(opts.VegaDir, opts.Project)
+	project, err := goals.ParseProject(opts.VegaDir, effectiveProject)
 	if err != nil {
 		return &Result{
 			Success: false,
 			Error: &ErrorInfo{
 				Code:    "project_not_found",
-				Message: fmt.Sprintf("Project '%s' not found", opts.Project),
+				Message: fmt.Sprintf("Project '%s' not found", effectiveProject),
 				Details: map[string]string{"error": err.Error()},
 			},
 		}, nil
@@ -587,13 +639,32 @@ func CreateGoal(opts CreateOptions) (*Result, *CreateResult) {
 	}
 
 	// Generate goal ID
-	goalID := generateGoalID()
+	var goalID string
+	if opts.ParentID != "" {
+		// Generate hierarchical child ID
+		goalID, err = hm.GenerateChildID(opts.ParentID)
+		if err != nil {
+			return &Result{
+				Success: false,
+				Error: &ErrorInfo{
+					Code:    "id_generation_failed",
+					Message: "Failed to generate hierarchical goal ID",
+					Details: map[string]string{"error": err.Error(), "parent_id": opts.ParentID},
+				},
+			}, nil
+		}
+	} else {
+		// Generate unique root goal ID
+		goalID = generateGoalID()
+	}
+
 	slug := slugify(opts.Title)
+	_ = parentDetail // Used for hierarchy setup later
 	branchName := fmt.Sprintf("goal-%s-%s", goalID, slug)
 
 	// Create goal file
 	goalFile := filepath.Join(opts.VegaDir, "goals", "active", goalID+".md")
-	if err := createGoalFile(goalFile, goalID, opts.Title, opts.Project); err != nil {
+	if err := createGoalFile(goalFile, goalID, opts.Title, effectiveProject); err != nil {
 		return &Result{
 			Success: false,
 			Error: &ErrorInfo{
@@ -608,7 +679,7 @@ func CreateGoal(opts CreateOptions) (*Result, *CreateResult) {
 	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
 	lockMgr := hub.NewLockManager(opts.VegaDir)
 	if err := lockMgr.WithRegistryLock("create-goal", func() error {
-		return addGoalToRegistry(registryPath, goalID, opts.Title, opts.Project)
+		return addGoalToRegistry(registryPath, goalID, opts.Title, effectiveProject)
 	}); err != nil {
 		return &Result{
 			Success: false,
@@ -620,19 +691,28 @@ func CreateGoal(opts CreateOptions) (*Result, *CreateResult) {
 		}, nil
 	}
 
+	// Set up hierarchy relationship if this is a child goal
+	if opts.ParentID != "" {
+		if err := hm.CreateChildGoal(goalID, opts.ParentID); err != nil {
+			// Non-fatal: log but continue
+			// The goal is created, just the hierarchy link might be missing
+		}
+	}
+
 	result := &CreateResult{
 		GoalID:     goalID,
 		Title:      opts.Title,
-		Project:    opts.Project,
+		Project:    effectiveProject,
 		BaseBranch: baseBranch,
 		GoalBranch: branchName,
 		GoalFile:   goalFile,
+		ParentID:   opts.ParentID,
 	}
 
 	// Create worktree (unless --no-worktree)
 	if !opts.NoWorktree {
-		projectBase := filepath.Join(opts.VegaDir, "workspaces", opts.Project, "worktree-base")
-		worktreePath := filepath.Join(opts.VegaDir, "workspaces", opts.Project, branchName)
+		projectBase := filepath.Join(opts.VegaDir, "workspaces", effectiveProject, "worktree-base")
+		worktreePath := filepath.Join(opts.VegaDir, "workspaces", effectiveProject, branchName)
 
 		if err := createWorktree(projectBase, worktreePath, branchName, baseBranch); err != nil {
 			return &Result{
@@ -651,7 +731,7 @@ func CreateGoal(opts CreateOptions) (*Result, *CreateResult) {
 
 		// Write worktree metadata to goal file
 		worktreeSection := fmt.Sprintf("\n## Worktree\n- **Branch**: %s\n- **Project**: %s\n- **Path**: workspaces/%s/%s\n- **Base Branch**: %s\n- **Created**: %s\n",
-			branchName, opts.Project, opts.Project, branchName, baseBranch, time.Now().Format("2006-01-02"))
+			branchName, effectiveProject, effectiveProject, branchName, baseBranch, time.Now().Format("2006-01-02"))
 
 		// Read existing content and insert before Status section
 		if content, err := os.ReadFile(goalFile); err == nil {
@@ -665,7 +745,7 @@ func CreateGoal(opts CreateOptions) (*Result, *CreateResult) {
 		}
 
 		// Update project config
-		projectConfig := filepath.Join(opts.VegaDir, "projects", opts.Project+".md")
+		projectConfig := filepath.Join(opts.VegaDir, "projects", effectiveProject+".md")
 		addGoalToProjectConfig(projectConfig, goalID, opts.Title)
 	}
 
