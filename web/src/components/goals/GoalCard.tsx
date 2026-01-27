@@ -39,30 +39,28 @@ export function GoalCard({ goal, onClick }: GoalCardProps) {
   const hasHighConfidence = completionStatus && completionStatus.confidence >= 0.7 && !completionStatus.complete
   const confidencePct = completionStatus ? Math.round(completionStatus.confidence * 100) : 0
 
+  // Determine border state (priority: questions > blocked > running > idle)
+  const borderState = goal.pending_questions > 0 ? 'needs-attention' :
+                      goal.is_blocked ? 'blocked' :
+                      goal.executor_status === 'running' ? 'running' :
+                      goal.executor_status === 'waiting' ? 'needs-attention' : 'idle'
+
   return (
     <Card
       className={cn(
-        "cursor-pointer hover:bg-accent/50 transition-all",
-        goal.status === 'completed' && "opacity-60",
-        goal.is_blocked && "opacity-60 border-yellow-500/50",
-        appearsComplete && "border-green-500 bg-green-50/50 dark:bg-green-950/20 shadow-md shadow-green-500/10"
+        "cursor-pointer hover:bg-accent/50 transition-all border-l-4",
+        goal.status === 'completed' && "opacity-60 border-l-green-500",
+        goal.status !== 'completed' && borderState === 'needs-attention' && "border-l-red-500",
+        goal.status !== 'completed' && borderState === 'blocked' && "border-l-yellow-500 opacity-80",
+        goal.status !== 'completed' && borderState === 'running' && "border-l-green-500",
+        goal.status !== 'completed' && borderState === 'idle' && "border-l-transparent",
+        appearsComplete && "border-l-green-500 bg-green-50/50 dark:bg-green-950/20 shadow-md shadow-green-500/10"
       )}
       onClick={onClick}
     >
       <CardHeader className="p-4 pb-2">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2">
-            {goal.status !== 'completed' && (
-              <div className={cn(
-                "h-2.5 w-2.5 rounded-full",
-                goal.executor_status === 'running' ? 'bg-green-500 animate-pulse' :
-                goal.executor_status === 'waiting' ? 'bg-red-500' :
-                'bg-muted-foreground'
-              )} />
-            )}
-            {goal.status === 'completed' && (
-              <div className="h-2.5 w-2.5 rounded-full bg-green-500" />
-            )}
             <CardTitle className="text-base font-semibold">#{goal.id}</CardTitle>
             {/* Project badge - more prominent */}
             {goal.projects.length > 0 && (
@@ -92,17 +90,19 @@ export function GoalCard({ goal, onClick }: GoalCardProps) {
                 {goal.pending_questions} Q
               </Badge>
             )}
-            <Badge variant={
-              goal.status === 'completed' ? 'success' :
-              goal.status === 'iced' ? 'secondary' :
-              goal.executor_status === 'running' ? 'success' :
-              goal.executor_status === 'waiting' ? 'destructive' :
-              'secondary'
-            }>
-              {goal.status === 'completed' ? 'COMPLETE' :
-               goal.status === 'iced' ? 'ICED' :
-               goal.executor_status.toUpperCase()}
-            </Badge>
+            {/* Only show badge for actionable/notable states - not idle/stopped */}
+            {goal.status === 'completed' && (
+              <Badge variant="success">COMPLETE</Badge>
+            )}
+            {goal.status === 'iced' && (
+              <Badge variant="secondary">ICED</Badge>
+            )}
+            {goal.status === 'active' && goal.executor_status === 'running' && (
+              <Badge variant="success">RUNNING</Badge>
+            )}
+            {goal.status === 'active' && goal.executor_status === 'waiting' && (
+              <Badge variant="destructive">WAITING</Badge>
+            )}
           </div>
         </div>
       </CardHeader>
