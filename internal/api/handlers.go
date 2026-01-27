@@ -308,11 +308,12 @@ func generateID() string {
 // GoalSummary combines registry goal with runtime status
 type GoalSummary struct {
 	goals.Goal
-	ExecutorStatus   string `json:"executor_status"`            // "running", "waiting", "stopped", "none"
-	PendingQuestions int    `json:"pending_questions"`
-	ActiveExecutors  int    `json:"active_executors"`
-	WorkspaceStatus  string `json:"workspace_status,omitempty"` // "ready", "missing", "error" (from project)
-	WorkspaceError   string `json:"workspace_error,omitempty"`  // Error message if workspace not ready
+	ExecutorStatus   string                  `json:"executor_status"`            // "running", "waiting", "stopped", "none"
+	PendingQuestions int                     `json:"pending_questions"`
+	ActiveExecutors  int                     `json:"active_executors"`
+	WorkspaceStatus  string                  `json:"workspace_status,omitempty"` // "ready", "missing", "error" (from project)
+	WorkspaceError   string                  `json:"workspace_error,omitempty"`  // Error message if workspace not ready
+	CompletionStatus *goals.CompletionStatus `json:"completion_status,omitempty"`
 }
 
 // CreateGoalRequest is the request body for POST /api/goals
@@ -466,6 +467,11 @@ func handleGoals(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 						}{"error", "Project config not found"}
 					}
 				}
+			}
+
+			// Get completion status (ignore errors gracefully)
+			if status, err := goals.IsGoalComplete(g.ID, p.Dir()); err == nil {
+				summary.CompletionStatus = status
 			}
 
 			summaries = append(summaries, summary)
