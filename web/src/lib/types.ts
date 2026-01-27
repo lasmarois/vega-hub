@@ -7,6 +7,26 @@ export interface Question {
   created_at: string
 }
 
+// CompletionSignalType indicates the source of a completion signal
+export type CompletionSignalType = 'planning_file' | 'acceptance' | 'commit' | 'goal_phases'
+
+// CompletionSignal represents a single signal indicating goal completion
+export interface CompletionSignal {
+  type: CompletionSignalType
+  source: string      // File path or commit hash
+  message: string     // Human-readable description
+}
+
+// CompletionStatus represents the completion state of a goal
+export interface CompletionStatus {
+  complete: boolean
+  signals: CompletionSignal[]
+  completed_phases: number
+  total_phases: number
+  missing_tasks: string[]
+  confidence: number  // 0.0-1.0
+}
+
 export interface GoalSummary {
   id: string
   title: string
@@ -18,6 +38,7 @@ export interface GoalSummary {
   active_executors: number
   workspace_status?: 'ready' | 'missing' | 'error'
   workspace_error?: string
+  completion_status?: CompletionStatus
 }
 
 export interface PhaseDetail {
@@ -89,6 +110,8 @@ export interface GoalDetail {
   state?: GoalState
   state_since?: string
   state_history?: StateEvent[]
+  // Completion detection
+  completion_status?: CompletionStatus
 }
 
 export interface GoalStatus {

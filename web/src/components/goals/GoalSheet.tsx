@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle, Info, Activity } from 'lucide-react'
+import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle, Info, Activity, Sparkles, ListTodo } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus, GoalState } from '@/lib/types'
 
@@ -70,6 +70,110 @@ function StateBadge({ state }: { state: GoalState }) {
 }
 import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog, CreateMRDialog, RecreateWorktreeDialog, DeleteGoalDialog } from './GoalActions'
 import { ChatThread } from './ChatThread'
+import type { CompletionStatus } from '@/lib/types'
+
+// CompletionStatusBadge shows completion detection status in the goal header
+function CompletionStatusBadge({ completionStatus }: { completionStatus: CompletionStatus }) {
+  const { complete, confidence, signals, missing_tasks, completed_phases, total_phases } = completionStatus
+  const confidencePct = Math.round(confidence * 100)
+
+  if (complete) {
+    return (
+      <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-md">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-green-600" />
+          <span className="text-sm font-medium text-green-700">Ready to Complete</span>
+          <Badge variant="success" className="ml-auto">
+            {confidencePct}% confidence
+          </Badge>
+        </div>
+        {signals.length > 0 && (
+          <div className="mt-2 text-xs text-green-600 space-y-1">
+            {signals.map((signal, i) => (
+              <div key={i} className="flex items-start gap-1.5">
+                <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>{signal.message}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Not complete - show what's missing
+  if (missing_tasks.length === 0 && confidence < 0.3) {
+    return null // Not enough data to show anything meaningful
+  }
+
+  return (
+    <div className="mt-3 p-3 bg-muted/50 border rounded-md">
+      <div className="flex items-center gap-2">
+        <ListTodo className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-medium">Completion Status</span>
+        {total_phases > 0 && (
+          <Badge variant="outline" className="ml-auto">
+            {completed_phases}/{total_phases} phases
+          </Badge>
+        )}
+      </div>
+
+      {/* Progress bar */}
+      {confidence > 0 && (
+        <div className="mt-2">
+          <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+            <span>Progress</span>
+            <span>{confidencePct}%</span>
+          </div>
+          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+            <div 
+              className={cn(
+                "h-full rounded-full transition-all",
+                confidence >= 0.7 ? "bg-green-500" : 
+                confidence >= 0.4 ? "bg-yellow-500" : "bg-muted-foreground"
+              )} 
+              style={{ width: `${confidencePct}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Signals detected */}
+      {signals.length > 0 && (
+        <div className="mt-2 text-xs text-muted-foreground space-y-1">
+          {signals.map((signal, i) => (
+            <div key={i} className="flex items-start gap-1.5">
+              <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0 text-green-500" />
+              <span>{signal.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Missing items */}
+      {missing_tasks.length > 0 && (
+        <div className="mt-2">
+          <div className="text-xs font-medium text-muted-foreground mb-1">
+            Missing ({missing_tasks.length}):
+          </div>
+          <div className="text-xs text-muted-foreground space-y-0.5 max-h-24 overflow-y-auto">
+            {missing_tasks.slice(0, 5).map((task, i) => (
+              <div key={i} className="flex items-start gap-1.5">
+                <Circle className="h-3 w-3 mt-0.5 shrink-0" />
+                <span className="truncate">{task}</span>
+              </div>
+            ))}
+            {missing_tasks.length > 5 && (
+              <div className="text-muted-foreground/60 pl-4">
+                +{missing_tasks.length - 5} more...
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface GoalSheetProps {
   open: boolean
@@ -232,6 +336,11 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
                   </span>
                 )}
               </div>
+            )}
+
+            {/* Completion Status Indicator */}
+            {goal.status === 'active' && goal.completion_status && (
+              <CompletionStatusBadge completionStatus={goal.completion_status} />
             )}
           </SheetHeader>
 
