@@ -1202,6 +1202,208 @@ type RemoveProjectResult struct {
 	GoalsWarning     string `json:"goals_warning,omitempty"`
 }
 
+// AddProjectURLOptions contains options for adding a project from a remote URL
+type AddProjectURLOptions struct {
+	Name       string
+	URL        string // Remote URL to clone from
+	BaseBranch string
+	VegaDir    string
+}
+
+// AddProjectFromURL clones a project from a remote URL
+func AddProjectFromURL(opts AddProjectURLOptions) (*Result, *AddProjectResult) {
+	// Validate project name
+	if !isValidProjectName(opts.Name) {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "invalid_name",
+				Message: "Invalid project name",
+				Details: map[string]string{
+					"name":    opts.Name,
+					"allowed": "alphanumeric, dash, underscore",
+				},
+			},
+		}, nil
+	}
+
+	// Check if project already exists
+	configFile := filepath.Join(opts.VegaDir, "projects", opts.Name+".md")
+	if _, err := os.Stat(configFile); err == nil {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "project_exists",
+				Message: fmt.Sprintf("Project '%s' already exists", opts.Name),
+				Details: map[string]string{"config": configFile},
+			},
+		}, nil
+	}
+
+	// Create workspace structure
+	workspaceDir := filepath.Join(opts.VegaDir, "workspaces", opts.Name)
+	worktreeBase := filepath.Join(workspaceDir, "worktree-base")
+
+	// Check if worktree-base already exists
+	if _, err := os.Stat(worktreeBase); err == nil {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "workspace_exists",
+				Message: fmt.Sprintf("Workspace already exists at %s", worktreeBase),
+				Details: map[string]string{"path": worktreeBase},
+			},
+		}, nil
+	}
+
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "mkdir_failed",
+				Message: "Failed to create workspace directory",
+				Details: map[string]string{"error": err.Error()},
+			},
+		}, nil
+	}
+
+	// Clone the repository
+	cmd := exec.Command("git", "clone", opts.URL, worktreeBase)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// Clean up workspace dir on failure
+		os.RemoveAll(workspaceDir)
+		return &Result{
+			Success: false,
+			Error: &ErrorInfo{
+				Code:    "clone_failed",
+				Message: "Failed to clone repository",
+				Details: map[string]string{
+					"url":    opts.URL,
+					"error":  err.Error(),
+					"output": string(output),
+				},
+			},
+		}, nil
+	}
+
+	// Checkout branch if specified
+	baseBranch := opts.BaseBranch
+	if baseBranch != "" {
+		cmd = exec.Command("git", "-C", worktreeBase, "checkout", baseBranch)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			// Cleanup and return error
+			os.RemoveAll(workspaceDir)
+			return &Result{
+				Success: false,
+				Error: &ErrorInfo{
+					Code:    "checkout_failed",
+					Message: fmt.Sprintf("Failed to checkout branch '%s'", baseBranch),
+					Details: map[string]string{
+						"branch": baseBranch,
+						"error":  err.Error(),
+						"output": string(output),
+					},
+				},
+			}, nil
+		}
+	} else {
+		// Detect current branch
+		cmd = exec.Command("git", "-C", worktreeBase, "branch", "--show-current")
+		if output, err := cmd.Output(); err == nil {
+			baseBranch = strings.TrimSpace(string(output))
+		}
+		if baseBranch == "" {
+			baseBranch = "main"
+		}
+	}
+
+	// Set up .claude/ structure from template
+	templateDir := filepath.Join(opts.VegaDir, "templates", "project-init", ".claude")
+	destDir := filepath.Join(worktreeBase, ".claude")
+	if _, err := os.Stat(templateDir); err == nil {
+		copyProjectDir(templateDir, destDir)
+	}
+
+	// Create docs/planning directories
+	planningDirs := []string{
+		filepath.Join(worktreeBase, "docs", "planning", "history"),
+		filepath.Join(worktreeBase, "docs", "planning", "iced"),
+	}
+	for _, dir := range planningDirs {
+		os.MkdirAll(dir, 0755)
+	}
+
+	// Create project config file
+	if err := os.MkdirAll(filepath.Dir(configFile), 0755); err == nil {
+		createProjectConfigFile(configFile, opts.Name, worktreeBase, baseBranch, opts.URL)
+	}
+
+	// Update projects/index.md
+	indexFile := filepath.Join(opts.VegaDir, "projects", "index.md")
+	addProjectToIndexFile(indexFile, opts.Name)
+
+	return &Result{Success: true}, &AddProjectResult{
+		Name:         opts.Name,
+		Path:         worktreeBase,
+		BaseBranch:   baseBranch,
+		GitRemote:    opts.URL,
+		ConfigFile:   configFile,
+		WorktreePath: worktreeBase,
+	}
+}
+
+// copyProjectDir recursively copies a directory
+func copyProjectDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		if entry.IsDir() {
+			copyProjectDir(srcPath, dstPath)
+		} else {
+			content, _ := os.ReadFile(srcPath)
+			info, _ := os.Stat(srcPath)
+			if info != nil {
+				os.WriteFile(dstPath, content, info.Mode())
+			}
+		}
+	}
+	return nil
+}
+
+// addProjectToIndexFile adds a project entry to index.md
+func addProjectToIndexFile(indexPath, name string) error {
+	content, err := os.ReadFile(indexPath)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var newLines []string
+	added := false
+
+	for i, line := range lines {
+		newLines = append(newLines, line)
+		if !added && strings.Contains(line, "|---") {
+			if i > 0 && strings.Contains(lines[i-1], "| Project |") {
+				projectRow := fmt.Sprintf("| [%s](%s.md) | `workspaces/%s/worktree-base/` | - | _Add description_ |",
+					name, name, name)
+				newLines = append(newLines, projectRow)
+				added = true
+			}
+		}
+	}
+
+	return os.WriteFile(indexPath, []byte(strings.Join(newLines, "\n")), 0644)
+}
+
 // AddProjectFromPath adds a project from a local path
 func AddProjectFromPath(opts AddProjectOptions) (*Result, *AddProjectResult) {
 	// Validate project name

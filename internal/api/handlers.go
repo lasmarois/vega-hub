@@ -1652,8 +1652,9 @@ type ProjectSummary struct {
 // AddProjectRequest is the request body for POST /api/projects
 type AddProjectRequest struct {
 	Name       string `json:"name"`
-	Path       string `json:"path"`        // Local path to the repository
-	BaseBranch string `json:"base_branch"` // Optional, will auto-detect
+	Path       string `json:"path,omitempty"` // Local path to existing repository
+	URL        string `json:"url,omitempty"`  // Remote URL to clone from
+	BaseBranch string `json:"base_branch"`    // Optional, will auto-detect
 }
 
 // AddProjectResponse is the response for POST /api/projects
@@ -1773,24 +1774,38 @@ func handleAddProject(h *hub.Hub) http.HandlerFunc {
 			return
 		}
 
-		if req.Path == "" {
+		if req.Path == "" && req.URL == "" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(AddProjectResponse{
 				Success: false,
-				Error:   "Project path is required",
+				Error:   "Either path (local) or url (remote) is required",
 			})
 			return
 		}
 
-		log.Printf("[PROJECT] Adding project: name=%q, path=%q, base_branch=%q", req.Name, req.Path, req.BaseBranch)
+		var result *operations.Result
+		var data *operations.AddProjectResult
 
-		result, data := operations.AddProjectFromPath(operations.AddProjectOptions{
-			Name:       req.Name,
-			Path:       req.Path,
-			BaseBranch: req.BaseBranch,
-			VegaDir:    h.Dir(),
-		})
+		if req.URL != "" {
+			// Clone from remote URL
+			log.Printf("[PROJECT] Cloning project: name=%q, url=%q, base_branch=%q", req.Name, req.URL, req.BaseBranch)
+			result, data = operations.AddProjectFromURL(operations.AddProjectURLOptions{
+				Name:       req.Name,
+				URL:        req.URL,
+				BaseBranch: req.BaseBranch,
+				VegaDir:    h.Dir(),
+			})
+		} else {
+			// Link existing local path
+			log.Printf("[PROJECT] Adding project: name=%q, path=%q, base_branch=%q", req.Name, req.Path, req.BaseBranch)
+			result, data = operations.AddProjectFromPath(operations.AddProjectOptions{
+				Name:       req.Name,
+				Path:       req.Path,
+				BaseBranch: req.BaseBranch,
+				VegaDir:    h.Dir(),
+			})
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		if !result.Success {
