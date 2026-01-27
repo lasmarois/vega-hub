@@ -31,39 +31,41 @@ import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minim
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus, GoalState } from '@/lib/types'
 
-// Helper to get badge variant and label for state
-function getStateInfo(state: GoalState): { variant: 'default' | 'secondary' | 'destructive' | 'success' | 'outline'; label: string; icon?: React.ReactNode } {
+// Helper to get badge variant, label, and description for state
+function getStateInfo(state: GoalState): { variant: 'default' | 'secondary' | 'destructive' | 'success' | 'outline'; label: string; description: string } {
   switch (state) {
     case 'pending':
-      return { variant: 'secondary', label: 'Pending' }
+      return { variant: 'secondary', label: 'Pending', description: 'Goal created, waiting to start' }
     case 'branching':
-      return { variant: 'default', label: 'Branching' }
+      return { variant: 'default', label: 'Branching', description: 'Creating branch and worktree' }
     case 'working':
-      return { variant: 'default', label: 'Working' }
+      return { variant: 'default', label: 'Working', description: 'Active development in progress' }
     case 'pushing':
-      return { variant: 'default', label: 'Pushing' }
+      return { variant: 'default', label: 'Pushing', description: 'Committing and pushing changes' }
     case 'merging':
-      return { variant: 'default', label: 'Merging' }
+      return { variant: 'default', label: 'Merging', description: 'Merging branch to base' }
     case 'done':
-      return { variant: 'success', label: 'Done' }
+      return { variant: 'success', label: 'Done', description: 'Goal completed successfully' }
     case 'iced':
-      return { variant: 'secondary', label: 'Iced' }
+      return { variant: 'secondary', label: 'Iced', description: 'Goal paused for later' }
     case 'failed':
-      return { variant: 'destructive', label: 'Failed' }
+      return { variant: 'destructive', label: 'Failed', description: 'Something went wrong (recoverable)' }
     case 'conflict':
-      return { variant: 'destructive', label: 'Conflict' }
+      return { variant: 'destructive', label: 'Conflict', description: 'Merge conflict needs resolution' }
     default:
-      return { variant: 'outline', label: state }
+      return { variant: 'outline', label: state, description: 'Unknown state' }
   }
 }
 
 function StateBadge({ state }: { state: GoalState }) {
-  const { variant, label } = getStateInfo(state)
+  const { variant, label, description } = getStateInfo(state)
   return (
-    <Badge variant={variant} className="gap-1">
-      <Activity className="h-3 w-3" />
-      {label}
-    </Badge>
+    <span title={description}>
+      <Badge variant={variant} className="gap-1 cursor-help">
+        <Activity className="h-3 w-3" />
+        {label}
+      </Badge>
+    </span>
   )
 }
 import { CompleteGoalDialog, IceGoalDialog, StopExecutorDialog, CleanupGoalDialog, ResumeGoalDialog, CreateMRDialog, RecreateWorktreeDialog, DeleteGoalDialog } from './GoalActions'
