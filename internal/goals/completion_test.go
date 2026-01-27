@@ -15,8 +15,6 @@ func setupCompletionTestDir(t *testing.T) string {
 	os.MkdirAll(filepath.Join(dir, "goals", "active"), 0755)
 	os.MkdirAll(filepath.Join(dir, "goals", "iced"), 0755)
 	os.MkdirAll(filepath.Join(dir, "goals", "history"), 0755)
-	os.MkdirAll(filepath.Join(dir, "docs", "planning", "history"), 0755)
-	os.MkdirAll(filepath.Join(dir, "docs", "planning"), 0755)
 	os.MkdirAll(filepath.Join(dir, "workspaces", "test-project"), 0755)
 
 	return dir
@@ -30,23 +28,13 @@ func writeGoalFile(t *testing.T, dir, goalID, content string) {
 	}
 }
 
-func writeTaskPlan(t *testing.T, dir, goalID, content string) {
+func writeGoalFileInFolder(t *testing.T, dir, goalID, content string) {
 	t.Helper()
-	planDir := filepath.Join(dir, "docs", "planning", "history", "goal-"+goalID)
-	os.MkdirAll(planDir, 0755)
-	path := filepath.Join(planDir, "task_plan.md")
+	goalDir := filepath.Join(dir, "goals", "active", goalID)
+	os.MkdirAll(goalDir, 0755)
+	path := filepath.Join(goalDir, goalID+".md")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write task plan: %v", err)
-	}
-}
-
-func writeWorktreeTaskPlan(t *testing.T, dir, worktreePath, content string) {
-	t.Helper()
-	fullPath := filepath.Join(dir, worktreePath)
-	os.MkdirAll(fullPath, 0755)
-	path := filepath.Join(fullPath, "task_plan.md")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write worktree task plan: %v", err)
+		t.Fatalf("failed to write goal file: %v", err)
 	}
 }
 
@@ -275,14 +263,13 @@ func TestCheckGoal_AcceptanceCriteriaIncomplete(t *testing.T) {
 }
 
 // ============================================================================
-// Planning File Tests
+// Folder Structure Tests
 // ============================================================================
 
-func TestCheckGoal_WithWorktreeTaskPlan(t *testing.T) {
+func TestCheckGoal_GoalInFolder(t *testing.T) {
 	dir := setupCompletionTestDir(t)
 
-	// Goal file with worktree reference
-	goalContent := `# Goal #wt1234: Test Goal
+	goalContent := `# Goal #folder1: Test Goal
 
 ## Phases
 
@@ -292,29 +279,12 @@ func TestCheckGoal_WithWorktreeTaskPlan(t *testing.T) {
 ## Acceptance Criteria
 
 - [x] All done
-
-## Worktree
-- **Branch**: goal-wt1234-test
-- **Project**: test-project
-- **Path**: workspaces/test-project/goal-wt1234-test
-- **Base Branch**: master
 `
-	writeGoalFile(t, dir, "wt1234", goalContent)
-
-	// Task plan in worktree
-	taskPlan := `# Task Plan
-
-## Phase 1: Setup [complete]
-- [x] Task one
-- [x] Task two
-
-## Phase 2: Build [complete]
-- [x] Task three
-`
-	writeWorktreeTaskPlan(t, dir, "workspaces/test-project/goal-wt1234-test", taskPlan)
+	// Write goal in folder structure: goals/active/<id>/<id>.md
+	writeGoalFileInFolder(t, dir, "folder1", goalContent)
 
 	checker := NewCompletionChecker(dir)
-	status, err := checker.CheckGoal("wt1234")
+	status, err := checker.CheckGoal("folder1")
 	if err != nil {
 		t.Fatalf("CheckGoal failed: %v", err)
 	}
@@ -323,65 +293,19 @@ func TestCheckGoal_WithWorktreeTaskPlan(t *testing.T) {
 		t.Error("expected goal to be complete")
 	}
 
-	// Check for planning file signal
-	hasPlanningSignal := false
+	// Check for acceptance signal with correct source path
+	hasAcceptanceSignal := false
 	for _, s := range status.Signals {
-		if s.Type == SignalPlanningFile {
-			hasPlanningSignal = true
+		if s.Type == SignalAcceptance {
+			hasAcceptanceSignal = true
+			expectedPath := filepath.Join(dir, "goals", "active", "folder1", "folder1.md")
+			if s.Source != expectedPath {
+				t.Errorf("expected source %s, got %s", expectedPath, s.Source)
+			}
 		}
 	}
-	if !hasPlanningSignal {
-		t.Error("expected SignalPlanningFile signal")
-	}
-}
-
-func TestCheckGoal_PlanningFileIncomplete(t *testing.T) {
-	dir := setupCompletionTestDir(t)
-
-	goalContent := `# Goal #plan5678: Test Goal
-
-## Phases
-
-### Phase 1: Work
-- [x] Do work
-
-## Acceptance Criteria
-
-- [x] All done
-
-## Worktree
-- **Path**: workspaces/test-project/goal-plan5678-test
-`
-	writeGoalFile(t, dir, "plan5678", goalContent)
-
-	// Incomplete task plan
-	taskPlan := `# Task Plan
-
-## Phase 1: Setup
-- [x] Task one
-- [ ] Task two incomplete
-`
-	writeWorktreeTaskPlan(t, dir, "workspaces/test-project/goal-plan5678-test", taskPlan)
-
-	checker := NewCompletionChecker(dir)
-	status, err := checker.CheckGoal("plan5678")
-	if err != nil {
-		t.Fatalf("CheckGoal failed: %v", err)
-	}
-
-	if status.Complete {
-		t.Error("expected goal to be incomplete due to planning file")
-	}
-
-	// Should have missing task from planning file
-	found := false
-	for _, task := range status.MissingTasks {
-		if task == "Planning: Setup: Task two incomplete" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected planning task in missing, got: %v", status.MissingTasks)
+	if !hasAcceptanceSignal {
+		t.Error("expected SignalAcceptance signal")
 	}
 }
 
@@ -412,9 +336,9 @@ func TestCheckGoal_ConfidenceCalculation(t *testing.T) {
 		t.Fatalf("CheckGoal failed: %v", err)
 	}
 
-	// Should have high confidence with goal phases (0.4) + acceptance (0.3) = 0.7
-	if status.Confidence < 0.6 {
-		t.Errorf("expected confidence >= 0.6, got %f", status.Confidence)
+	// Should have high confidence with goal phases (0.5) + acceptance (0.4) = 0.9
+	if status.Confidence < 0.8 {
+		t.Errorf("expected confidence >= 0.8, got %f", status.Confidence)
 	}
 }
 
@@ -548,132 +472,6 @@ func TestCheckGoal_MixedCaseCheckboxes(t *testing.T) {
 }
 
 // ============================================================================
-// parseTaskPlanCompletion Tests
-// ============================================================================
-
-func TestParseTaskPlanCompletion_AllComplete(t *testing.T) {
-	dir := setupCompletionTestDir(t)
-
-	taskPlan := `# Task Plan
-
-## Phase 1: Setup [complete]
-- [x] Initialize project
-- [x] Configure settings
-
-## Phase 2: Implementation [complete]
-- [x] Implement feature A
-- [x] Implement feature B
-`
-	writeTaskPlan(t, dir, "plan1", taskPlan)
-
-	planPath := filepath.Join(dir, "docs", "planning", "history", "goal-plan1", "task_plan.md")
-	status, err := parseTaskPlanCompletion(planPath)
-	if err != nil {
-		t.Fatalf("parseTaskPlanCompletion failed: %v", err)
-	}
-
-	if !status.Complete {
-		t.Error("expected task plan to be complete")
-	}
-	if status.TotalPhases != 2 {
-		t.Errorf("expected 2 phases, got %d", status.TotalPhases)
-	}
-	if status.CompletedPhases != 2 {
-		t.Errorf("expected 2 completed phases, got %d", status.CompletedPhases)
-	}
-}
-
-func TestParseTaskPlanCompletion_HashStyleHeaders(t *testing.T) {
-	dir := setupCompletionTestDir(t)
-
-	taskPlan := `# Task Plan
-
-## Phases
-
-### Phase 1: Foundation
-- [x] Task one
-- [x] Task two
-
-### Phase 2: Building
-- [x] Task three
-- [ ] Task four
-`
-	writeTaskPlan(t, dir, "hash1", taskPlan)
-
-	planPath := filepath.Join(dir, "docs", "planning", "history", "goal-hash1", "task_plan.md")
-	status, err := parseTaskPlanCompletion(planPath)
-	if err != nil {
-		t.Fatalf("parseTaskPlanCompletion failed: %v", err)
-	}
-
-	if status.TotalPhases != 2 {
-		t.Errorf("expected 2 phases, got %d", status.TotalPhases)
-	}
-	if status.CompletedPhases != 1 {
-		t.Errorf("expected 1 completed phase, got %d", status.CompletedPhases)
-	}
-}
-
-func TestParseTaskPlanCompletion_RealWorldFormat(t *testing.T) {
-	dir := setupCompletionTestDir(t)
-
-	taskPlan := `# Task Plan: Mobile-first UI Redesign
-
-**Goal:** #97ade68
-**Project:** vega-hub
-**Started:** 2026-01-24
-
----
-
-## Phase 1: Foundation [complete]
-
-### Tasks
-- [x] Install shadcn components
-- [x] Create Layout component
-- [x] Set up React Router
-
----
-
-## Phase 2: Core Views [complete]
-
-### Tasks
-- [x] Home dashboard
-- [x] Goals list with filters
-- [x] GoalSheet.tsx
-
----
-
-## Phase 3: Projects & History [complete]
-
-### Tasks
-- [x] Projects view with ProjectCard
-- [x] ProjectSheet.tsx with tabs
-- [x] History view with search
-- [ ] New API endpoints (backend) - deferred
-`
-	writeTaskPlan(t, dir, "97ade68", taskPlan)
-
-	planPath := filepath.Join(dir, "docs", "planning", "history", "goal-97ade68", "task_plan.md")
-	status, err := parseTaskPlanCompletion(planPath)
-	if err != nil {
-		t.Fatalf("parseTaskPlanCompletion failed: %v", err)
-	}
-
-	if status.TotalPhases != 3 {
-		t.Errorf("expected 3 phases, got %d", status.TotalPhases)
-	}
-
-	// Phase 3 has one incomplete task despite [complete] marker
-	if status.Complete {
-		t.Error("expected incomplete due to deferred API endpoints task")
-	}
-
-	if len(status.MissingTasks) != 1 {
-		t.Errorf("expected 1 missing task, got %d: %v", len(status.MissingTasks), status.MissingTasks)
-	}
-}
-
-// ============================================================================
 // Signal Types Tests
 // ============================================================================
 
@@ -682,10 +480,9 @@ func TestSignalTypes(t *testing.T) {
 		signal   CompletionSignalType
 		expected string
 	}{
-		{SignalPlanningFile, "planning_file"},
+		{SignalGoalPhases, "goal_phases"},
 		{SignalAcceptance, "acceptance"},
 		{SignalCommit, "commit"},
-		{SignalGoalPhases, "goal_phases"},
 	}
 
 	for _, tt := range tests {
@@ -741,16 +538,47 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
-func TestContainsTask(t *testing.T) {
-	tasks := []string{"Phase 1: Task A", "Phase 2: Task B", "Acceptance: Criterion C"}
+// ============================================================================
+// findGoalFile Tests
+// ============================================================================
 
-	if !containsTask(tasks, "Task A") {
-		t.Error("expected to find 'Task A'")
+func TestFindGoalFile_FlatStructure(t *testing.T) {
+	dir := setupCompletionTestDir(t)
+
+	goalContent := `# Goal #flat1: Test`
+	writeGoalFile(t, dir, "flat1", goalContent)
+
+	checker := NewCompletionChecker(dir)
+	path := checker.findGoalFile("flat1")
+
+	expected := filepath.Join(dir, "goals", "active", "flat1.md")
+	if path != expected {
+		t.Errorf("expected %s, got %s", expected, path)
 	}
-	if !containsTask(tasks, "Criterion C") {
-		t.Error("expected to find 'Criterion C'")
+}
+
+func TestFindGoalFile_FolderStructure(t *testing.T) {
+	dir := setupCompletionTestDir(t)
+
+	goalContent := `# Goal #folder2: Test`
+	writeGoalFileInFolder(t, dir, "folder2", goalContent)
+
+	checker := NewCompletionChecker(dir)
+	path := checker.findGoalFile("folder2")
+
+	expected := filepath.Join(dir, "goals", "active", "folder2", "folder2.md")
+	if path != expected {
+		t.Errorf("expected %s, got %s", expected, path)
 	}
-	if containsTask(tasks, "Task D") {
-		t.Error("should not find 'Task D'")
+}
+
+func TestFindGoalFile_NotFound(t *testing.T) {
+	dir := setupCompletionTestDir(t)
+
+	checker := NewCompletionChecker(dir)
+	path := checker.findGoalFile("nonexistent")
+
+	if path != "" {
+		t.Errorf("expected empty string for nonexistent goal, got %s", path)
 	}
 }

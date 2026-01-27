@@ -238,19 +238,40 @@ type Task struct {
 	Completed   bool   `json:"completed"`
 }
 
+// findGoalFile locates the goal markdown file, checking both flat and folder structures
+// Returns (path, status) where status is "active", "iced", or "completed"
+func (p *Parser) findGoalFile(id string) (string, string) {
+	dirs := []struct {
+		name   string
+		status string
+	}{
+		{"active", "active"},
+		{"iced", "iced"},
+		{"history", "completed"},
+	}
+
+	for _, dir := range dirs {
+		// Flat structure: goals/<dir>/<id>.md
+		flatPath := filepath.Join(p.dir, "goals", dir.name, id+".md")
+		if _, err := os.Stat(flatPath); err == nil {
+			return flatPath, dir.status
+		}
+
+		// Folder structure: goals/<dir>/<id>/<id>.md
+		folderPath := filepath.Join(p.dir, "goals", dir.name, id, id+".md")
+		if _, err := os.Stat(folderPath); err == nil {
+			return folderPath, dir.status
+		}
+	}
+
+	return "", ""
+}
+
 // ParseGoalDetail reads and parses a specific goal file
 func (p *Parser) ParseGoalDetail(id string) (*GoalDetail, error) {
-	goalPath := filepath.Join(p.dir, "goals", "active", id+".md")
-	goalStatus := "active"
-
-	// Try active first, then iced, then completed
-	if _, err := os.Stat(goalPath); os.IsNotExist(err) {
-		goalPath = filepath.Join(p.dir, "goals", "iced", id+".md")
-		goalStatus = "iced"
-		if _, err := os.Stat(goalPath); os.IsNotExist(err) {
-			goalPath = filepath.Join(p.dir, "goals", "history", id+".md")
-			goalStatus = "completed"
-		}
+	goalPath, goalStatus := p.findGoalFile(id)
+	if goalPath == "" {
+		return nil, os.ErrNotExist
 	}
 
 	file, err := os.Open(goalPath)
