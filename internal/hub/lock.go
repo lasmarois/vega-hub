@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -136,6 +137,7 @@ func (m *LockManager) Acquire(lockType LockType, resource, goalID, project, owne
 }
 
 // acquire is the internal lock acquisition implementation
+// Uses exponential backoff with jitter to handle high concurrency
 func (m *LockManager) acquire(lockType LockType, resource, goalID, project, owner string, timeout time.Duration) (*Lock, error) {
 	if err := m.ensureLocksDir(); err != nil {
 		return nil, fmt.Errorf("creating locks directory: %w", err)
@@ -161,16 +163,21 @@ func (m *LockManager) acquire(lockType LockType, resource, goalID, project, owne
 		info: info,
 	}
 
+	// Exponential backoff: start at 50ms, max 800ms, with jitter
+	baseDelay := 50 * time.Millisecond
+	maxDelay := 800 * time.Millisecond
+	currentDelay := baseDelay
+
 	for {
 		// Check timeout
 		if time.Now().After(deadline) {
 			// Get info about who holds the lock for better error message
 			existingLock, _ := m.GetLockInfo(lockPath)
 			return nil, &LockTimeoutError{
-				Resource:     resource,
-				LockType:     lockType,
-				Timeout:      timeout,
-				HeldBy:       existingLock,
+				Resource: resource,
+				LockType: lockType,
+				Timeout:  timeout,
+				HeldBy:   existingLock,
 			}
 		}
 
@@ -191,13 +198,20 @@ func (m *LockManager) acquire(lockType LockType, resource, goalID, project, owne
 			}
 		}
 
-		// Wait before retry
-		time.Sleep(LockAcquireRetryDelay)
+		// Wait with exponential backoff + jitter (±25%)
+		jitter := time.Duration(rand.Int63n(int64(currentDelay / 2)))
+		sleepTime := currentDelay + jitter - (currentDelay / 4)
+		time.Sleep(sleepTime)
+
+		// Increase delay for next iteration (exponential backoff)
+		currentDelay *= 2
+		if currentDelay > maxDelay {
+			currentDelay = maxDelay
+		}
 	}
 }
 
-// TryAcquire attempts to acquire a lock with exponential backoff retry
-// Retries up to 5 times with delays: 50ms, 100ms, 200ms, 400ms, 800ms (~1.5s total)
+// TryAcquire attempts to acquire a lock without waiting (single attempt)
 func (m *LockManager) TryAcquire(lockType LockType, resource, goalID, project, owner string) (*Lock, error) {
 	if err := m.ensureLocksDir(); err != nil {
 		return nil, fmt.Errorf("creating locks directory: %w", err)
@@ -222,24 +236,9 @@ func (m *LockManager) TryAcquire(lockType LockType, resource, goalID, project, o
 		info: info,
 	}
 
-	// Exponential backoff: 50ms, 100ms, 200ms, 400ms, 800ms
-	const maxRetries = 5
-	delay := 50 * time.Millisecond
-
-	var lastErr error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			time.Sleep(delay)
-			delay *= 2 // Double the delay for next retry
-		}
-
-		err := lock.tryAcquire()
-		if err == nil {
-			return lock, nil
-		}
-		lastErr = err
-
-		// Check if stale and try to steal
+	err := lock.tryAcquire()
+	if err != nil {
+		// Check if stale
 		if os.IsExist(err) {
 			existingLock, readErr := m.GetLockInfo(lockPath)
 			if readErr == nil && existingLock.IsStale() {
@@ -248,9 +247,10 @@ func (m *LockManager) TryAcquire(lockType LockType, resource, goalID, project, o
 				}
 			}
 		}
+		return nil, &LockError{Resource: resource, LockType: lockType, Err: err}
 	}
 
-	return nil, &LockError{Resource: resource, LockType: lockType, Err: lastErr}
+	return lock, nil
 }
 
 // GetLockInfo reads lock information from a lock file
