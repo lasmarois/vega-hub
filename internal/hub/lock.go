@@ -211,7 +211,9 @@ func (m *LockManager) acquire(lockType LockType, resource, goalID, project, owne
 	}
 }
 
-// TryAcquire attempts to acquire a lock without waiting (single attempt)
+// TryAcquire attempts to acquire a lock with retry and exponential backoff.
+// Retries up to 5 times with delays: 50ms, 100ms, 200ms, 400ms, 800ms (±20% jitter).
+// Total max wait is approximately 1.5 seconds.
 func (m *LockManager) TryAcquire(lockType LockType, resource, goalID, project, owner string) (*Lock, error) {
 	if err := m.ensureLocksDir(); err != nil {
 		return nil, fmt.Errorf("creating locks directory: %w", err)
@@ -236,8 +238,26 @@ func (m *LockManager) TryAcquire(lockType LockType, resource, goalID, project, o
 		info: info,
 	}
 
-	err := lock.tryAcquire()
-	if err != nil {
+	// Exponential backoff delays: 50ms, 100ms, 200ms, 400ms, 800ms
+	backoffDelays := []time.Duration{
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		200 * time.Millisecond,
+		400 * time.Millisecond,
+		800 * time.Millisecond,
+	}
+	maxRetries := len(backoffDelays)
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Update AcquiredAt on each attempt
+		lock.info.AcquiredAt = time.Now()
+
+		err := lock.tryAcquire()
+		if err == nil {
+			return lock, nil
+		}
+
 		// Check if stale
 		if os.IsExist(err) {
 			existingLock, readErr := m.GetLockInfo(lockPath)
@@ -247,10 +267,21 @@ func (m *LockManager) TryAcquire(lockType LockType, resource, goalID, project, o
 				}
 			}
 		}
-		return nil, &LockError{Resource: resource, LockType: lockType, Err: err}
+
+		lastErr = err
+
+		// Don't sleep after the last attempt
+		if attempt < maxRetries {
+			// Add jitter ±20% to prevent thundering herd
+			baseDelay := backoffDelays[attempt]
+			jitterRange := int64(float64(baseDelay) * 0.2)
+			jitter := time.Duration(rand.Int63n(2*jitterRange+1) - jitterRange)
+			sleepTime := baseDelay + jitter
+			time.Sleep(sleepTime)
+		}
 	}
 
-	return lock, nil
+	return nil, &LockError{Resource: resource, LockType: lockType, Err: lastErr}
 }
 
 // GetLockInfo reads lock information from a lock file

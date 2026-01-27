@@ -156,6 +156,8 @@ func TestLockManager_StaleLock(t *testing.T) {
 }
 
 func TestLockManager_ConcurrentAcquisition(t *testing.T) {
+	// With retry logic in TryAcquire (5 retries, ~1.5s max wait),
+	// all goroutines should eventually succeed if locks are held briefly
 	dir := t.TempDir()
 	lm := NewLockManager(dir)
 
@@ -171,7 +173,7 @@ func TestLockManager_ConcurrentAcquisition(t *testing.T) {
 			lock, err := lm.TryAcquire(LockWorktreeBase, "shared", "", "shared", "")
 			if err == nil {
 				atomic.AddInt32(&successCount, 1)
-				// Hold lock briefly
+				// Hold lock briefly - short enough that retries can succeed
 				time.Sleep(10 * time.Millisecond)
 				lock.Release()
 			}
@@ -180,9 +182,10 @@ func TestLockManager_ConcurrentAcquisition(t *testing.T) {
 
 	wg.Wait()
 
-	// Only one goroutine should have succeeded
-	if successCount != 1 {
-		t.Errorf("Expected exactly 1 successful acquisition, got %d", successCount)
+	// With retry logic, all goroutines should succeed
+	// (each waits up to ~1.5s with backoff, lock held only 10ms each)
+	if successCount != numGoroutines {
+		t.Errorf("Expected %d successful acquisitions, got %d", numGoroutines, successCount)
 	}
 }
 
@@ -504,6 +507,78 @@ func TestLockManager_HighConcurrencyStress(t *testing.T) {
 	if successfulLocks != expected {
 		t.Errorf("Successful locks: expected %d, got %d", expected, successfulLocks)
 	}
+}
+
+func TestLockManager_TryAcquire_FiveParallel(t *testing.T) {
+	// Test the original issue: 5 parallel goal creates should ALL succeed
+	// with the retry logic in TryAcquire
+	dir := t.TempDir()
+	lm := NewLockManager(dir)
+
+	const numGoroutines = 5
+	var wg sync.WaitGroup
+	var successCount int32
+	errors := make([]error, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+
+			lock, err := lm.TryAcquire(LockRegistry, "registry", "", "", "")
+			if err != nil {
+				errors[id] = err
+				return
+			}
+
+			atomic.AddInt32(&successCount, 1)
+			// Simulate actual work (file operations, etc.)
+			time.Sleep(50 * time.Millisecond)
+			lock.Release()
+		}(i)
+	}
+
+	wg.Wait()
+
+	// ALL 5 should succeed with retry logic
+	if successCount != numGoroutines {
+		t.Errorf("Expected %d successful acquisitions, got %d", numGoroutines, successCount)
+		for i, err := range errors {
+			if err != nil {
+				t.Errorf("  Goroutine %d error: %v", i, err)
+			}
+		}
+	}
+}
+
+func TestLockManager_TryAcquire_RetryTiming(t *testing.T) {
+	// Verify that TryAcquire respects the retry backoff timing
+	dir := t.TempDir()
+	lm := NewLockManager(dir)
+
+	// Acquire first lock
+	lock1, err := lm.TryAcquire(LockWorktreeBase, "test-resource", "", "", "holder")
+	if err != nil {
+		t.Fatalf("Failed to acquire first lock: %v", err)
+	}
+
+	// Try to acquire second lock - should fail after all retries (~1.5s)
+	start := time.Now()
+	_, err = lm.TryAcquire(LockWorktreeBase, "test-resource", "", "", "waiter")
+	elapsed := time.Since(start)
+
+	// Should have failed (lock never released)
+	if err == nil {
+		t.Fatal("Expected TryAcquire to fail when lock is held")
+	}
+
+	// Should have waited approximately 50+100+200+400+800 = 1550ms (±20% jitter on each)
+	// Allow range: 1200ms to 2500ms
+	if elapsed < 1200*time.Millisecond || elapsed > 2500*time.Millisecond {
+		t.Errorf("Expected TryAcquire to wait ~1.5s, waited %v", elapsed)
+	}
+
+	lock1.Release()
 }
 
 func TestSanitizeResource(t *testing.T) {
