@@ -550,8 +550,10 @@ type GoalStateResponse struct {
 // SpawnRequest is the request body for POST /api/goals/:id/spawn
 type SpawnRequest struct {
 	Context string `json:"context,omitempty"`
-	User    string `json:"user,omitempty"` // Username spawning this executor
-	Mode    string `json:"mode,omitempty"` // Executor mode: plan, implement, review, test, security, quick
+	User    string `json:"user,omitempty"`    // Username spawning this executor
+	Mode    string `json:"mode,omitempty"`    // Executor mode: plan, implement, review, test, security, quick
+	Meta    bool   `json:"meta,omitempty"`    // If true, spawn as meta-executor in goal folder
+	Project string `json:"project,omitempty"` // Project name for project executor (mutually exclusive with meta)
 }
 
 // CreateMRRequest is the request body for POST /api/goals/:id/create-mr
@@ -898,6 +900,12 @@ func handleGoalSpawn(h *hub.Hub, goalID string) http.HandlerFunc {
 			}
 		}
 
+		// Validate mutually exclusive flags
+		if req.Meta && req.Project != "" {
+			http.Error(w, "meta and project are mutually exclusive", http.StatusBadRequest)
+			return
+		}
+
 		// Get user from X-Vega-User header, or from request body, or auto-detect
 		user := r.Header.Get("X-Vega-User")
 		if user == "" {
@@ -911,13 +919,21 @@ func handleGoalSpawn(h *hub.Hub, goalID string) http.HandlerFunc {
 			return
 		}
 
-		log.Printf("[SPAWN] Processing spawn for Goal #%s, context: %q, user: %q, mode: %q", goalID, req.Context, user, mode)
+		executorType := "project"
+		if req.Meta {
+			executorType = "meta"
+		}
+
+		log.Printf("[SPAWN] Processing spawn for Goal #%s, type: %s, context: %q, user: %q, mode: %q, project: %q",
+			goalID, executorType, req.Context, user, mode, req.Project)
 
 		result := h.SpawnExecutor(hub.SpawnRequest{
 			GoalID:  goalID,
 			Context: req.Context,
 			User:    user,
 			Mode:    mode,
+			Meta:    req.Meta,
+			Project: req.Project,
 		})
 
 		log.Printf("[SPAWN] Result for Goal #%s: success=%v, message=%s", goalID, result.Success, result.Message)
