@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Target, ChevronDown, Plus, GitFork, CheckCircle, ChevronRight } from 'lucide-react'
+import { Target, ChevronDown, Plus, CheckCircle, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalSummary, Project } from '@/lib/types'
 import { CreateGoalDialog, GoalCard } from '@/components/goals'
@@ -31,7 +31,7 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
   const [showCompleted, setShowCompleted] = useState(false)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
-  const [treeView, setTreeView] = useState(false)
+  const [treeView] = useState(true) // Always tree view
   const [expandedGoals, setExpandedGoals] = useState<Set<string>>(new Set())
 
   // Fetch projects for the create dialog
@@ -126,8 +126,7 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
     const hasChildren = children.length > 0
     const isExpanded = expandedGoals.has(goal.id)
     
-    const toggleExpand = (e: React.MouseEvent) => {
-      e.stopPropagation()
+    const toggleExpand = () => {
       const newExpanded = new Set(expandedGoals)
       if (isExpanded) {
         newExpanded.delete(goal.id)
@@ -140,7 +139,7 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
     return (
       <div key={goal.id} className="relative">
         <div 
-          className="flex items-start gap-1"
+          className="flex items-start"
           style={{ paddingLeft: depth * 24 }}
         >
           {/* Tree connector for children */}
@@ -162,34 +161,14 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
             </div>
           )}
           
-          {/* Expand/collapse button */}
-          {hasChildren ? (
-            <button
-              onClick={toggleExpand}
-              className={cn(
-                "mt-2.5 p-1 rounded transition-all duration-150 z-10 relative shrink-0",
-                "hover:bg-accent active:scale-95",
-                isExpanded && "bg-accent/50"
-              )}
-              aria-label={isExpanded ? "Collapse" : "Expand"}
-            >
-              <ChevronRight className={cn(
-                "h-4 w-4 transition-transform duration-150",
-                isExpanded ? "rotate-90 text-foreground" : "text-muted-foreground"
-              )} />
-              {/* Child count badge */}
-              {!isExpanded && (
-                <span className="absolute -top-1 -right-1 text-[10px] bg-primary text-primary-foreground rounded-full min-w-[16px] h-4 flex items-center justify-center font-medium px-1">
-                  {children.length}
-                </span>
-              )}
-            </button>
-          ) : depth > 0 ? (
-            <div className="w-6 shrink-0" />
-          ) : null}
-          
           <div className="flex-1 min-w-0">
-            <GoalCard goal={goal} onClick={() => onGoalClick(goal.id)} />
+            <GoalCard 
+              goal={goal} 
+              onClick={() => onGoalClick(goal.id)}
+              childCount={children.length}
+              isExpanded={isExpanded}
+              onToggleExpand={hasChildren ? toggleExpand : undefined}
+            />
           </div>
         </div>
         
@@ -259,41 +238,31 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center border rounded-lg overflow-hidden">
-            <Button
-              variant={treeView ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setTreeView(!treeView)}
-              className="gap-1.5 rounded-none border-0"
-              title="Toggle tree view"
-            >
-              <GitFork className="h-4 w-4" />
-              Tree
-            </Button>
-            {treeView && childrenMap.size > 0 && (
-              <>
-                <div className="w-px h-5 bg-border" />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={expandAll}
-                  className="rounded-none border-0 px-2 h-8"
-                  title="Expand all"
-                >
-                  <ChevronDown className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={collapseAll}
-                  className="rounded-none border-0 px-2 h-8"
-                  title="Collapse all"
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-              </>
-            )}
-          </div>
+          {childrenMap.size > 0 && (
+            <div className="flex items-center border rounded-lg overflow-hidden">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={expandAll}
+                className="rounded-none border-0 px-2 h-8 gap-1"
+                title="Expand all"
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+                <span className="text-xs">Expand</span>
+              </Button>
+              <div className="w-px h-5 bg-border" />
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={collapseAll}
+                className="rounded-none border-0 px-2 h-8 gap-1"
+                title="Collapse all"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+                <span className="text-xs">Collapse</span>
+              </Button>
+            </div>
+          )}
           <Select value={sort} onValueChange={(v) => setSort(v as SortType)}>
             <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="Sort by" />

@@ -256,10 +256,10 @@ func CompleteGoal(opts CompleteOptions) (*Result, *CompleteResult) {
 	}
 
 	// Step 5: Update registry (with lock to prevent race conditions)
-	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
+	// Registry now uses JSONL
 	lockMgr := hub.NewLockManager(opts.VegaDir)
 	lockMgr.WithRegistryLock("complete-goal", func() error {
-		return completeGoalInRegistry(registryPath, opts.GoalID, goalTitle, opts.Project)
+		return completeGoalInRegistry(opts.VegaDir, opts.GoalID, goalTitle, opts.Project)
 	})
 
 	// Step 6: Update project config
@@ -356,10 +356,10 @@ func IceGoal(opts IceOptions) (*Result, *IceResult) {
 	updateGoalStatus(icedFile, "iced", opts.Reason)
 
 	// Step 4: Update registry (with lock to prevent race conditions)
-	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
+	// Registry now uses JSONL
 	lockMgr := hub.NewLockManager(opts.VegaDir)
 	lockMgr.WithRegistryLock("ice-goal", func() error {
-		return iceGoalInRegistry(registryPath, opts.GoalID, opts.Reason)
+		return iceGoalInRegistry(opts.VegaDir, opts.GoalID, opts.Reason)
 	})
 
 	return &Result{Success: true}, result
@@ -420,10 +420,10 @@ func ResumeGoal(opts ResumeOptions) (*Result, *ResumeResult) {
 	}
 
 	// Step 2: Update registry (with lock to prevent race conditions)
-	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
+	// Registry now uses JSONL
 	lockMgr := hub.NewLockManager(opts.VegaDir)
 	lockMgr.WithRegistryLock("resume-goal", func() error {
-		return resumeGoalInRegistry(registryPath, opts.GoalID, goalTitle, opts.Project)
+		return resumeGoalInRegistry(opts.VegaDir, opts.GoalID, goalTitle, opts.Project)
 	})
 
 	// Step 3: Check if worktree exists, recreate if needed
@@ -676,10 +676,10 @@ func CreateGoal(opts CreateOptions) (*Result, *CreateResult) {
 	}
 
 	// Update registry (with lock to prevent race conditions)
-	registryPath := filepath.Join(opts.VegaDir, "goals", "REGISTRY.md")
+	// Registry now uses JSONL
 	lockMgr := hub.NewLockManager(opts.VegaDir)
 	if err := lockMgr.WithRegistryLock("create-goal", func() error {
-		return addGoalToRegistry(registryPath, goalID, opts.Title, effectiveProject)
+		return addGoalToRegistry(opts.VegaDir, goalID, opts.Title, effectiveProject)
 	}); err != nil {
 		return &Result{
 			Success: false,
@@ -1001,35 +1001,18 @@ func copyHooksToWorktree(vegaDir, worktreePath string) {
 	}
 }
 
-func addGoalToRegistry(registryPath, goalID, title, project string) error {
-	content, err := os.ReadFile(registryPath)
-	if err != nil {
-		return err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	var newLines []string
-	added := false
-
-	// Add after Active Goals table header
-	for i, line := range lines {
-		newLines = append(newLines, line)
-
-		if !added && strings.Contains(line, "| ID | Title | Project(s) | Status | Phase |") {
-			// Next line is separator
-			if i+1 < len(lines) && strings.Contains(lines[i+1], "|---") {
-				newLines = append(newLines, lines[i+1])
-				// Add new goal
-				newRow := fmt.Sprintf("| %s | %s | %s | Active | 1/? |", goalID, title, project)
-				newLines = append(newLines, newRow)
-				added = true
-				// Skip the separator in main loop
-				lines = append(lines[:i+1], lines[i+2:]...)
-			}
-		}
-	}
-
-	return os.WriteFile(registryPath, []byte(strings.Join(newLines, "\n")), 0644)
+func addGoalToRegistry(vegaDir, goalID, title, project string) error {
+	registry := goals.NewRegistry(vegaDir)
+	now := time.Now().Format(time.RFC3339)
+	return registry.Add(goals.RegistryEntry{
+		ID:        goalID,
+		Title:     title,
+		Projects:  []string{project},
+		Status:    "active",
+		Phase:     "1/?",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
 }
 
 func addGoalToProjectConfig(configPath, goalID, title string) error {
@@ -1052,47 +1035,14 @@ func addGoalToProjectConfig(configPath, goalID, title string) error {
 	return os.WriteFile(configPath, []byte(strings.Join(newLines, "\n")), 0644)
 }
 
-func completeGoalInRegistry(registryPath, goalID, goalTitle, project string) error {
-	content, err := os.ReadFile(registryPath)
-	if err != nil {
-		return err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	var newLines []string
+func completeGoalInRegistry(vegaDir, goalID, goalTitle, project string) error {
+	registry := goals.NewRegistry(vegaDir)
 	today := time.Now().Format("2006-01-02")
-	addedToCompleted := false
-
-	// Remove from Active Goals
-	activePattern := regexp.MustCompile(fmt.Sprintf(`^\| %s \|.*\| Active \|`, regexp.QuoteMeta(goalID)))
-	for _, line := range lines {
-		if activePattern.MatchString(line) {
-			continue
-		}
-		newLines = append(newLines, line)
-	}
-
-	// Add to Completed Goals
-	var finalLines []string
-	for i, line := range newLines {
-		finalLines = append(finalLines, line)
-
-		if !addedToCompleted && strings.Contains(line, "| ID | Title | Project(s) | Completed |") {
-			if i+1 < len(newLines) && strings.Contains(newLines[i+1], "|---") {
-				finalLines = append(finalLines, newLines[i+1])
-				completedRow := fmt.Sprintf("| %s | %s | %s | %s |", goalID, goalTitle, project, today)
-				finalLines = append(finalLines, completedRow)
-				addedToCompleted = true
-				newLines = append(newLines[:i+1], newLines[i+2:]...)
-			}
-		}
-	}
-
-	if !addedToCompleted {
-		finalLines = newLines
-	}
-
-	return os.WriteFile(registryPath, []byte(strings.Join(finalLines, "\n")), 0644)
+	return registry.Update(goalID, func(e *goals.RegistryEntry) {
+		e.Status = "completed"
+		e.CompletedAt = today
+		e.UpdatedAt = time.Now().Format(time.RFC3339)
+	})
 }
 
 func completeGoalInProjectConfig(configPath, goalID, goalTitle string) error {
@@ -1125,53 +1075,13 @@ func completeGoalInProjectConfig(configPath, goalID, goalTitle string) error {
 	return os.WriteFile(configPath, []byte(strings.Join(newLines, "\n")), 0644)
 }
 
-func iceGoalInRegistry(registryPath, goalID, reason string) error {
-	content, err := os.ReadFile(registryPath)
-	if err != nil {
-		return err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	var newLines []string
-	var goalTitle, goalProject string
-	addedToIced := false
-
-	// First pass: remove from Active Goals and capture details
-	activePattern := regexp.MustCompile(fmt.Sprintf(`^\| %s \|([^|]*)\|([^|]*)\| Active`, regexp.QuoteMeta(goalID)))
-	for _, line := range lines {
-		if matches := activePattern.FindStringSubmatch(line); matches != nil {
-			goalTitle = strings.TrimSpace(matches[1])
-			goalProject = strings.TrimSpace(matches[2])
-			continue // Skip this line (remove from active)
-		}
-		newLines = append(newLines, line)
-	}
-
-	// Second pass: add to Iced Goals section
-	var finalLines []string
-	for i, line := range newLines {
-		finalLines = append(finalLines, line)
-
-		// Add after Iced Goals table header
-		if !addedToIced && strings.Contains(line, "| ID | Title | Project(s) | Reason |") {
-			// Check if next line is separator
-			if i+1 < len(newLines) && strings.Contains(newLines[i+1], "|---") {
-				finalLines = append(finalLines, newLines[i+1])
-				// Add the iced goal row
-				icedRow := fmt.Sprintf("| %s | %s | %s | %s |", goalID, goalTitle, goalProject, reason)
-				finalLines = append(finalLines, icedRow)
-				addedToIced = true
-				// Skip the separator in the next iteration
-				newLines = append(newLines[:i+1], newLines[i+2:]...)
-			}
-		}
-	}
-
-	if !addedToIced {
-		finalLines = newLines
-	}
-
-	return os.WriteFile(registryPath, []byte(strings.Join(finalLines, "\n")), 0644)
+func iceGoalInRegistry(vegaDir, goalID, reason string) error {
+	registry := goals.NewRegistry(vegaDir)
+	return registry.Update(goalID, func(e *goals.RegistryEntry) {
+		e.Status = "iced"
+		e.Reason = reason
+		e.UpdatedAt = time.Now().Format(time.RFC3339)
+	})
 }
 
 func updateGoalStatus(goalFile, status, reason string) error {
@@ -1212,58 +1122,13 @@ func recreateWorktree(projectBase, worktreePath, branchName string) error {
 	return nil
 }
 
-func resumeGoalInRegistry(registryPath, goalID, goalTitle, project string) error {
-	content, err := os.ReadFile(registryPath)
-	if err != nil {
-		return err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	var newLines []string
-	addedToActive := false
-
-	// First pass: remove from Iced Goals section
-	icedPattern := regexp.MustCompile(fmt.Sprintf(`^\| %s \|`, regexp.QuoteMeta(goalID)))
-	inIcedSection := false
-	for _, line := range lines {
-		if strings.Contains(line, "## Iced Goals") {
-			inIcedSection = true
-		} else if strings.HasPrefix(line, "## ") {
-			inIcedSection = false
-		}
-
-		// Skip the goal row if we're in the Iced section
-		if inIcedSection && icedPattern.MatchString(line) {
-			continue
-		}
-		newLines = append(newLines, line)
-	}
-
-	// Second pass: add to Active Goals section
-	var finalLines []string
-	for i, line := range newLines {
-		finalLines = append(finalLines, line)
-
-		// Add after Active Goals table header
-		if !addedToActive && strings.Contains(line, "| ID | Title | Project(s) | Status | Phase |") {
-			// Check if next line is separator
-			if i+1 < len(newLines) && strings.Contains(newLines[i+1], "|---") {
-				finalLines = append(finalLines, newLines[i+1])
-				// Add the active goal row
-				activeRow := fmt.Sprintf("| %s | %s | %s | Active | 1/? |", goalID, goalTitle, project)
-				finalLines = append(finalLines, activeRow)
-				addedToActive = true
-				// Skip the separator in the next iteration
-				newLines = append(newLines[:i+1], newLines[i+2:]...)
-			}
-		}
-	}
-
-	if !addedToActive {
-		finalLines = newLines
-	}
-
-	return os.WriteFile(registryPath, []byte(strings.Join(finalLines, "\n")), 0644)
+func resumeGoalInRegistry(vegaDir, goalID, goalTitle, project string) error {
+	registry := goals.NewRegistry(vegaDir)
+	return registry.Update(goalID, func(e *goals.RegistryEntry) {
+		e.Status = "active"
+		e.Reason = ""
+		e.UpdatedAt = time.Now().Format(time.RFC3339)
+	})
 }
 
 // =============================================================================

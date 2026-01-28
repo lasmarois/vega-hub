@@ -37,174 +37,29 @@ func (p *Parser) Dir() string {
 	return p.dir
 }
 
-// ParseRegistry reads and parses the REGISTRY.md file
+// ParseRegistry reads and parses the registry.jsonl file
 func (p *Parser) ParseRegistry() ([]Goal, error) {
-	registryPath := filepath.Join(p.dir, "goals", "REGISTRY.md")
-	file, err := os.Open(registryPath)
+	registry := NewRegistry(p.dir)
+	entries, err := registry.Load()
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 
-	var goals []Goal
-	scanner := bufio.NewScanner(file)
-
-	// Track which section we're in
-	section := ""
-	inTable := false
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Detect section headers
-		if strings.HasPrefix(line, "## Active Goals") {
-			section = "active"
-			inTable = false
-			continue
-		} else if strings.HasPrefix(line, "## Iced Goals") {
-			section = "iced"
-			inTable = false
-			continue
-		} else if strings.HasPrefix(line, "## Completed Goals") {
-			section = "completed"
-			inTable = false
-			continue
-		} else if strings.HasPrefix(line, "## ") {
-			// Other sections we don't care about
-			section = ""
-			inTable = false
-			continue
+	goals := make([]Goal, 0, len(entries))
+	for _, entry := range entries {
+		goal := Goal{
+			ID:       entry.ID,
+			Title:    entry.Title,
+			Projects: entry.Projects,
+			Status:   entry.Status,
+			Phase:    entry.Phase,
+			ParentID: entry.ParentID,
+			Reason:   entry.Reason,
 		}
-
-		// Skip table headers (lines with |---)
-		if strings.Contains(line, "|---") {
-			inTable = true
-			continue
-		}
-
-		// Skip non-table lines
-		if !strings.HasPrefix(line, "|") || !strings.HasSuffix(strings.TrimSpace(line), "|") {
-			continue
-		}
-
-		// Parse table row
-		if !inTable {
-			// First row after section header is the header row, skip it
-			inTable = true
-			continue
-		}
-
-		// Split by | and clean up
-		parts := strings.Split(line, "|")
-		if len(parts) < 3 {
-			continue
-		}
-
-		// Remove first and last empty elements from split
-		parts = parts[1 : len(parts)-1]
-		for i := range parts {
-			parts[i] = strings.TrimSpace(parts[i])
-		}
-
-		// Parse based on section
-		switch section {
-		case "active":
-			if len(parts) >= 5 && parts[0] != "" {
-				goal := parseActiveGoal(parts)
-				if goal != nil {
-					goals = append(goals, *goal)
-				}
-			}
-		case "iced":
-			if len(parts) >= 4 && parts[0] != "" {
-				goal := parseIcedGoal(parts)
-				if goal != nil {
-					goals = append(goals, *goal)
-				}
-			}
-		case "completed":
-			if len(parts) >= 4 && parts[0] != "" {
-				goal := parseCompletedGoal(parts)
-				if goal != nil {
-					goals = append(goals, *goal)
-				}
-			}
-		}
+		goals = append(goals, goal)
 	}
 
-	return goals, scanner.Err()
-}
-
-// parseActiveGoal parses an active goal row: | ID | Title | Project(s) | Status | Phase |
-func parseActiveGoal(parts []string) *Goal {
-	if len(parts) < 5 {
-		return nil
-	}
-
-	id := strings.TrimSpace(parts[0])
-	if id == "" {
-		return nil
-	}
-
-	return &Goal{
-		ID:       id,
-		Title:    parts[1],
-		Projects: parseProjects(parts[2]),
-		Status:   "active",
-		Phase:    parts[4],
-	}
-}
-
-// parseIcedGoal parses an iced goal row: | ID | Title | Project(s) | Reason |
-func parseIcedGoal(parts []string) *Goal {
-	if len(parts) < 4 {
-		return nil
-	}
-
-	id := strings.TrimSpace(parts[0])
-	if id == "" {
-		return nil
-	}
-
-	return &Goal{
-		ID:       id,
-		Title:    parts[1],
-		Projects: parseProjects(parts[2]),
-		Status:   "iced",
-		Reason:   parts[3],
-	}
-}
-
-// parseCompletedGoal parses a completed goal row: | ID | Title | Project(s) | Completed |
-func parseCompletedGoal(parts []string) *Goal {
-	if len(parts) < 4 {
-		return nil
-	}
-
-	id := strings.TrimSpace(parts[0])
-	if id == "" {
-		return nil
-	}
-
-	return &Goal{
-		ID:       id,
-		Title:    parts[1],
-		Projects: parseProjects(parts[2]),
-		Status:   "completed",
-	}
-}
-
-// parseProjects splits a comma-separated project list
-func parseProjects(s string) []string {
-	projects := strings.Split(s, ",")
-	result := make([]string, 0, len(projects))
-	for _, p := range projects {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			result = append(result, p)
-		}
-	}
-	return result
+	return goals, nil
 }
 
 // WorktreeInfo contains worktree metadata stored in goal file

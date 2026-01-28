@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { AlertTriangle, CheckCircle2, Ban, GitFork, Network } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Ban, GitFork, Network, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalSummary } from '@/lib/types'
 
@@ -28,9 +28,12 @@ function parsePhase(phase: string): { current: number; total: number } | null {
 interface GoalCardProps {
   goal: GoalSummary
   onClick: () => void
+  childCount?: number
+  isExpanded?: boolean
+  onToggleExpand?: () => void
 }
 
-export function GoalCard({ goal, onClick }: GoalCardProps) {
+export function GoalCard({ goal, onClick, childCount = 0, isExpanded = false, onToggleExpand }: GoalCardProps) {
   const phaseInfo = parsePhase(goal.phase)
   const completionStatus = goal.completion_status
 
@@ -191,6 +194,28 @@ export function GoalCard({ goal, onClick }: GoalCardProps) {
           <div className="text-xs text-muted-foreground">
             Phase: {goal.phase}
           </div>
+        )}
+
+        {/* Expand/collapse children */}
+        {childCount > 0 && onToggleExpand && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleExpand()
+            }}
+            className={cn(
+              "w-full flex items-center gap-2 pt-2 mt-2 border-t text-sm text-muted-foreground",
+              "hover:text-foreground transition-colors"
+            )}
+          >
+            <ChevronRight className={cn(
+              "h-4 w-4 transition-transform duration-150",
+              isExpanded && "rotate-90"
+            )} />
+            <span>
+              {isExpanded ? 'Hide' : 'Show'} {childCount} sub-goal{childCount !== 1 ? 's' : ''}
+            </span>
+          </button>
         )}
       </CardContent>
     </Card>
