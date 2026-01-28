@@ -128,46 +128,48 @@ func NewStateManager(dir string) *StateManager {
 
 // stateFilePath returns the path to a goal's state file
 func (m *StateManager) stateFilePath(goalID string) string {
-	// Check active first, then iced, then history
-	activePath := filepath.Join(m.dir, "goals", "active", goalID+".state.jsonl")
-	if _, err := os.Stat(activePath); err == nil {
-		return activePath
+	// Check folder structure first (goals/active/<id>/<id>.state.jsonl)
+	// Then fall back to flat structure (goals/active/<id>.state.jsonl)
+	
+	dirs := []string{"active", "iced", "history"}
+	for _, dir := range dirs {
+		// Folder structure
+		folderPath := filepath.Join(m.dir, "goals", dir, goalID, goalID+".state.jsonl")
+		if _, err := os.Stat(folderPath); err == nil {
+			return folderPath
+		}
+		// Flat structure (legacy)
+		flatPath := filepath.Join(m.dir, "goals", dir, goalID+".state.jsonl")
+		if _, err := os.Stat(flatPath); err == nil {
+			return flatPath
+		}
 	}
 	
-	icedPath := filepath.Join(m.dir, "goals", "iced", goalID+".state.jsonl")
-	if _, err := os.Stat(icedPath); err == nil {
-		return icedPath
-	}
-	
-	historyPath := filepath.Join(m.dir, "goals", "history", goalID+".state.jsonl")
-	if _, err := os.Stat(historyPath); err == nil {
-		return historyPath
-	}
-	
-	// Default to active for new goals
-	return activePath
+	// Default to folder structure in active for new goals
+	return filepath.Join(m.dir, "goals", "active", goalID, goalID+".state.jsonl")
 }
 
 // stateFilePathForWrite returns the path for writing (always in the goal's current location)
 func (m *StateManager) stateFilePathForWrite(goalID string) (string, error) {
 	// Check where the goal file is to determine where state should go
-	activeGoal := filepath.Join(m.dir, "goals", "active", goalID+".md")
-	if _, err := os.Stat(activeGoal); err == nil {
-		return filepath.Join(m.dir, "goals", "active", goalID+".state.jsonl"), nil
+	// Supports both folder structure (goals/<dir>/<id>/<id>.md) and flat (goals/<dir>/<id>.md)
+	
+	dirs := []string{"active", "iced", "history"}
+	for _, dir := range dirs {
+		// Folder structure (preferred)
+		folderGoal := filepath.Join(m.dir, "goals", dir, goalID, goalID+".md")
+		if _, err := os.Stat(folderGoal); err == nil {
+			return filepath.Join(m.dir, "goals", dir, goalID, goalID+".state.jsonl"), nil
+		}
+		// Flat structure (legacy)
+		flatGoal := filepath.Join(m.dir, "goals", dir, goalID+".md")
+		if _, err := os.Stat(flatGoal); err == nil {
+			return filepath.Join(m.dir, "goals", dir, goalID+".state.jsonl"), nil
+		}
 	}
 	
-	icedGoal := filepath.Join(m.dir, "goals", "iced", goalID+".md")
-	if _, err := os.Stat(icedGoal); err == nil {
-		return filepath.Join(m.dir, "goals", "iced", goalID+".state.jsonl"), nil
-	}
-	
-	historyGoal := filepath.Join(m.dir, "goals", "history", goalID+".md")
-	if _, err := os.Stat(historyGoal); err == nil {
-		return filepath.Join(m.dir, "goals", "history", goalID+".state.jsonl"), nil
-	}
-	
-	// Goal doesn't exist yet, assume active (for create flow)
-	return filepath.Join(m.dir, "goals", "active", goalID+".state.jsonl"), nil
+	// Goal doesn't exist yet, default to folder structure in active
+	return filepath.Join(m.dir, "goals", "active", goalID, goalID+".state.jsonl"), nil
 }
 
 // GetState returns the current state of a goal
@@ -518,12 +520,26 @@ func (m *StateManager) MoveStateFile(goalID, fromDir, toDir string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	
-	fromPath := filepath.Join(m.dir, "goals", fromDir, goalID+".state.jsonl")
-	toPath := filepath.Join(m.dir, "goals", toDir, goalID+".state.jsonl")
+	// Check folder structure first, then flat
+	fromFolderPath := filepath.Join(m.dir, "goals", fromDir, goalID, goalID+".state.jsonl")
+	fromFlatPath := filepath.Join(m.dir, "goals", fromDir, goalID+".state.jsonl")
 	
-	// Only move if source exists
-	if _, err := os.Stat(fromPath); os.IsNotExist(err) {
+	var fromPath string
+	if _, err := os.Stat(fromFolderPath); err == nil {
+		fromPath = fromFolderPath
+	} else if _, err := os.Stat(fromFlatPath); err == nil {
+		fromPath = fromFlatPath
+	} else {
 		return nil // Nothing to move
+	}
+	
+	// Determine target path (prefer folder structure if goal folder exists)
+	toFolderDir := filepath.Join(m.dir, "goals", toDir, goalID)
+	var toPath string
+	if _, err := os.Stat(toFolderDir); err == nil {
+		toPath = filepath.Join(toFolderDir, goalID+".state.jsonl")
+	} else {
+		toPath = filepath.Join(m.dir, "goals", toDir, goalID+".state.jsonl")
 	}
 	
 	return os.Rename(fromPath, toPath)
