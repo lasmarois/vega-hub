@@ -666,10 +666,12 @@ func handleGoalRoutes(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 		case "planning-files":
 			// Handle nested paths like "planning-files/:project/:filename"
 			if len(actionParts) > 1 {
-				handleGoalPlanningFileAction(p, id, actionParts[1])(w, r)
+				handleGoalPlanningFileAction(h, p, id, actionParts[1])(w, r)
 			} else {
 				handleGoalPlanningFiles(p, id)(w, r)
 			}
+		case "phases":
+			handleGoalPhases(h, p, id)(w, r)
 		default:
 			http.Error(w, "Unknown action: "+action, http.StatusNotFound)
 		}
@@ -3438,7 +3440,7 @@ func handleGoalPlanningFiles(p *goals.Parser, goalID string) http.HandlerFunc {
 }
 
 // handleGoalPlanningFileAction handles GET/POST /api/goals/:id/planning-files/:project/:filename
-func handleGoalPlanningFileAction(p *goals.Parser, goalID, subPath string) http.HandlerFunc {
+func handleGoalPlanningFileAction(h *hub.Hub, p *goals.Parser, goalID, subPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Parse subPath: project/filename
 		parts := strings.SplitN(subPath, "/", 2)
@@ -3481,6 +3483,13 @@ func handleGoalPlanningFileAction(p *goals.Parser, goalID, subPath string) http.
 				http.Error(w, "Failed to save planning file: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
+
+			// Emit SSE event for planning file received
+			h.EmitEvent("planning_file_received", map[string]interface{}{
+				"goal_id":  goalID,
+				"project":  project,
+				"filename": filename,
+			})
 
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -3538,4 +3547,177 @@ func readRequestBody(r *http.Request, maxBytes int64) ([]byte, error) {
 		}
 	}
 	return content, nil
+}
+
+// PhaseUpdateRequest is the request for POST /api/goals/:id/phases
+type PhaseUpdateRequest struct {
+	Phase   int    `json:"phase"`            // Phase number (1-indexed)
+	Status  string `json:"status"`           // "complete", "in_progress", "pending"
+	Project string `json:"project,omitempty"` // Optional: project that completed this phase
+}
+
+// PhaseStatus represents the status of a single phase
+type PhaseStatus struct {
+	Number      int    `json:"number"`
+	Title       string `json:"title"`
+	Status      string `json:"status"` // "complete", "in_progress", "pending"
+	TotalTasks  int    `json:"total_tasks"`
+	DoneTasks   int    `json:"done_tasks"`
+}
+
+// PhasesResponse is the response for GET /api/goals/:id/phases
+type PhasesResponse struct {
+	GoalID string        `json:"goal_id"`
+	Phases []PhaseStatus `json:"phases"`
+}
+
+// handleGoalPhases handles GET/POST /api/goals/:id/phases
+// GET: Returns current phase status parsed from goal.md
+// POST: Updates a phase status in goal.md
+func handleGoalPhases(h *hub.Hub, p *goals.Parser, goalID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			// Parse goal detail to get phases
+			detail, err := p.ParseGoalDetail(goalID)
+			if err != nil {
+				http.Error(w, "Goal not found: "+err.Error(), http.StatusNotFound)
+				return
+			}
+
+			// Use already-parsed phases from GoalDetail
+			var phases []PhaseStatus
+			for _, phase := range detail.Phases {
+				totalTasks := len(phase.Tasks)
+				doneTasks := 0
+				for _, task := range phase.Tasks {
+					if task.Completed {
+						doneTasks++
+					}
+				}
+				
+				phases = append(phases, PhaseStatus{
+					Number:     phase.Number,
+					Title:      phase.Title,
+					Status:     phase.Status,
+					TotalTasks: totalTasks,
+					DoneTasks:  doneTasks,
+				})
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(PhasesResponse{
+				GoalID: goalID,
+				Phases: phases,
+			})
+
+		case http.MethodPost:
+			var req PhaseUpdateRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			if req.Phase < 1 {
+				http.Error(w, "Phase number must be >= 1", http.StatusBadRequest)
+				return
+			}
+
+			validStatuses := map[string]bool{"complete": true, "in_progress": true, "pending": true}
+			if !validStatuses[req.Status] {
+				http.Error(w, "Status must be: complete, in_progress, or pending", http.StatusBadRequest)
+				return
+			}
+
+			// Verify goal exists
+			_, err := p.ParseGoalDetail(goalID)
+			if err != nil {
+				http.Error(w, "Goal not found: "+err.Error(), http.StatusNotFound)
+				return
+			}
+
+			// Get goal file path (construct it)
+			goalFilePath := filepath.Join(p.Dir(), "goals", "active", goalID, goalID+".md")
+			
+			// Check if file exists, try alternative locations
+			if _, err := os.Stat(goalFilePath); os.IsNotExist(err) {
+				// Try iced location
+				goalFilePath = filepath.Join(p.Dir(), "goals", "iced", goalID, goalID+".md")
+				if _, err := os.Stat(goalFilePath); os.IsNotExist(err) {
+					http.Error(w, "Goal file not found", http.StatusNotFound)
+					return
+				}
+			}
+
+			// Update the phase in goal.md
+			if err := updateGoalPhase(goalFilePath, req.Phase, req.Status); err != nil {
+				http.Error(w, "Failed to update phase: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			// Emit SSE event for phase update
+			h.EmitEvent("phase_updated", map[string]interface{}{
+				"goal_id": goalID,
+				"phase":   req.Phase,
+				"status":  req.Status,
+				"project": req.Project,
+			})
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"goal_id": goalID,
+				"phase":   req.Phase,
+				"status":  req.Status,
+			})
+
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// updateGoalPhase updates a phase status in the goal.md file
+// It finds the phase by number and updates all checkboxes in that phase
+func updateGoalPhase(filePath string, phaseNum int, status string) error {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("reading goal file: %w", err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	var result []string
+	
+	currentPhase := 0
+	inTargetPhase := false
+	phaseHeaderRegex := regexp.MustCompile(`^###\s+Phase\s+\d+`)
+
+	for _, line := range lines {
+		// Check for phase header
+		if phaseHeaderRegex.MatchString(line) {
+			currentPhase++
+			inTargetPhase = (currentPhase == phaseNum)
+		}
+
+		// If we're in the target phase and this is a checkbox line
+		if inTargetPhase && strings.Contains(line, "- [") {
+			if status == "complete" {
+				// Mark as done
+				line = strings.Replace(line, "- [ ]", "- [x]", 1)
+			} else if status == "pending" {
+				// Mark as not done
+				line = strings.Replace(line, "- [x]", "- [ ]", 1)
+			}
+			// "in_progress" doesn't change checkboxes
+		}
+
+		result = append(result, line)
+	}
+
+	// Write back
+	if err := os.WriteFile(filePath, []byte(strings.Join(result, "\n")), 0644); err != nil {
+		return fmt.Errorf("writing goal file: %w", err)
+	}
+
+	return nil
 }
