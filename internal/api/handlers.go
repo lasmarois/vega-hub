@@ -315,11 +315,12 @@ type GoalSummary struct {
 	WorkspaceError   string                  `json:"workspace_error,omitempty"`  // Error message if workspace not ready
 	CompletionStatus *goals.CompletionStatus `json:"completion_status,omitempty"`
 	// Hierarchy fields
-	ParentID  string   `json:"parent_id,omitempty"`
-	Children  []string `json:"children,omitempty"`
-	Depth     int      `json:"depth"`
-	IsBlocked bool     `json:"is_blocked,omitempty"`
-	Blockers  []string `json:"blockers,omitempty"` // IDs of blocking goals
+	ParentID    string   `json:"parent_id,omitempty"`
+	Children    []string `json:"children,omitempty"`
+	HasChildren bool     `json:"has_children,omitempty"`
+	Depth       int      `json:"depth"`
+	IsBlocked   bool     `json:"is_blocked,omitempty"`
+	Blockers    []string `json:"blockers,omitempty"` // IDs of blocking goals
 }
 
 // CreateGoalRequest is the request body for POST /api/goals
@@ -449,6 +450,7 @@ func handleGoals(h *hub.Hub, p *goals.Parser) http.HandlerFunc {
 				ActiveExecutors:  executorsByGoal[g.ID],
 				ParentID:         parentID,
 				Children:         children,
+				HasChildren:      len(children) > 0,
 				Depth:            hm.GetHierarchyDepth(g.ID),
 				IsBlocked:        isBlocked,
 				Blockers:         blockerIDs,

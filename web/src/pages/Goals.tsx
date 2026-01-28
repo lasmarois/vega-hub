@@ -138,89 +138,78 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
     }
     
     return (
-      <div key={goal.id} className="relative group/tree">
-        {/* Tree connector lines - refined styling */}
-        {depth > 0 && (
-          <div 
-            className="absolute pointer-events-none"
-            style={{ left: depth * 28 - 20 }}
-          >
-            {/* Vertical line */}
-            <div 
-              className={cn(
-                "absolute w-0.5 bg-gradient-to-b from-muted-foreground/40 to-muted-foreground/20",
-                "left-0 top-0 transition-colors group-hover/tree:from-primary/40 group-hover/tree:to-primary/20"
-              )}
-              style={{ height: isLast ? 32 : 'calc(100% + 8px)' }}
-            />
-            {/* Horizontal line with rounded corner */}
-            <div 
-              className={cn(
-                "absolute h-0.5 bg-muted-foreground/30 transition-colors group-hover/tree:bg-primary/30",
-                "top-8 left-0"
-              )}
-              style={{ width: 16 }}
-            />
-            {/* Corner dot */}
-            <div 
-              className={cn(
-                "absolute w-1.5 h-1.5 rounded-full bg-muted-foreground/40 transition-colors group-hover/tree:bg-primary/50",
-                "top-[30px] left-[14px]"
-              )}
-            />
-          </div>
-        )}
-        
+      <div key={goal.id} className="relative">
         <div 
           className="flex items-start gap-1"
-          style={{ marginLeft: depth * 28 }}
+          style={{ paddingLeft: depth * 24 }}
         >
+          {/* Tree connector for children */}
+          {depth > 0 && (
+            <div className="absolute flex items-center" style={{ left: (depth - 1) * 24 + 12 }}>
+              {/* Vertical line */}
+              <div 
+                className={cn(
+                  "absolute w-px bg-border",
+                  isLast ? "h-7" : "h-full"
+                )}
+                style={{ top: 0 }}
+              />
+              {/* Horizontal connector */}
+              <div 
+                className="absolute w-3 h-px bg-border"
+                style={{ top: 28, left: 0 }}
+              />
+            </div>
+          )}
+          
           {/* Expand/collapse button */}
           {hasChildren ? (
             <button
               onClick={toggleExpand}
               className={cn(
-                "mt-2.5 p-1.5 rounded-md transition-all duration-200 z-10 relative",
-                "hover:bg-accent/80 active:scale-95",
+                "mt-2.5 p-1 rounded transition-all duration-150 z-10 relative shrink-0",
+                "hover:bg-accent active:scale-95",
                 isExpanded && "bg-accent/50"
               )}
               aria-label={isExpanded ? "Collapse" : "Expand"}
             >
               <ChevronRight className={cn(
-                "h-4 w-4 transition-transform duration-200 ease-out",
-                isExpanded ? "rotate-90 text-primary" : "text-muted-foreground"
+                "h-4 w-4 transition-transform duration-150",
+                isExpanded ? "rotate-90 text-foreground" : "text-muted-foreground"
               )} />
               {/* Child count badge */}
               {!isExpanded && (
-                <span className="absolute -top-1 -right-1 text-[10px] bg-muted text-muted-foreground rounded-full w-4 h-4 flex items-center justify-center font-medium">
+                <span className="absolute -top-1 -right-1 text-[10px] bg-primary text-primary-foreground rounded-full min-w-[16px] h-4 flex items-center justify-center font-medium px-1">
                   {children.length}
                 </span>
               )}
             </button>
           ) : depth > 0 ? (
-            <div className="w-8" />
+            <div className="w-6 shrink-0" />
           ) : null}
           
-          <div className={cn("flex-1 transition-all duration-200", depth > 0 && "ml-1")}>
+          <div className="flex-1 min-w-0">
             <GoalCard goal={goal} onClick={() => onGoalClick(goal.id)} />
           </div>
         </div>
         
-        {/* Children with animation */}
-        <div 
-          className={cn(
-            "overflow-hidden transition-all duration-300 ease-out",
-            hasChildren && isExpanded ? "opacity-100 mt-2" : "opacity-0 h-0 mt-0"
-          )}
-        >
-          {hasChildren && (
-            <div className="space-y-2">
-              {children.map((child: GoalSummary, idx: number) => 
-                renderGoalTree(child, depth + 1, idx === children.length - 1)
-              )}
-            </div>
-          )}
-        </div>
+        {/* Children */}
+        {hasChildren && isExpanded && (
+          <div className="mt-2 space-y-2 relative">
+            {/* Continuous vertical line for children */}
+            <div 
+              className="absolute w-px bg-border"
+              style={{ 
+                left: depth * 24 + 12,
+                top: 0,
+                bottom: 8
+              }}
+            />
+            {children.map((child: GoalSummary, idx: number) => 
+              renderGoalTree(child, depth + 1, idx === children.length - 1)
+            )}
+          </div>
+        )}
       </div>
     )
   }

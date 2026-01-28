@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { AlertTriangle, CheckCircle2, Ban, GitFork } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Ban, GitFork, Network } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalSummary } from '@/lib/types'
 
@@ -53,7 +53,7 @@ export function GoalCard({ goal, onClick }: GoalCardProps) {
         goal.status !== 'completed' && borderState === 'needs-attention' && "border-l-red-500",
         goal.status !== 'completed' && borderState === 'blocked' && "border-l-yellow-500 opacity-80",
         goal.status !== 'completed' && borderState === 'running' && "border-l-green-500",
-        goal.status !== 'completed' && borderState === 'idle' && "border-l-transparent",
+        goal.status !== 'completed' && borderState === 'idle' && "border-l-border",
         appearsComplete && "border-l-green-500 bg-green-50/50 dark:bg-green-950/20 shadow-md shadow-green-500/10"
       )}
       onClick={onClick}
@@ -61,7 +61,14 @@ export function GoalCard({ goal, onClick }: GoalCardProps) {
       <CardHeader className="p-4 pb-2">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2">
-            <CardTitle className="text-base font-semibold">#{goal.id}</CardTitle>
+            <CardTitle className="text-base font-semibold flex items-center gap-1.5">
+              #{goal.id}
+              {goal.has_children && (
+                <span title="Has sub-goals">
+                  <Network className="h-4 w-4 text-primary" />
+                </span>
+              )}
+            </CardTitle>
             {/* Project badge - more prominent */}
             {goal.projects.length > 0 && (
               <Badge variant="outline" className="text-xs font-medium">
