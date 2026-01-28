@@ -3472,14 +3472,26 @@ func handleGoalPlanningFileAction(h *hub.Hub, p *goals.Parser, goalID, subPath s
 			w.Write([]byte(content))
 
 		case http.MethodPost:
-			// Save planning file (body is raw content)
+			// Save planning file (body is raw content or JSON with content field)
 			content, err := readRequestBody(r, 1024*1024) // 1MB max
 			if err != nil {
 				http.Error(w, "Failed to read request body: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 
-			if err := mgr.SavePlanningFile(goalID, project, filename, string(content)); err != nil {
+			// If Content-Type is JSON, extract the content field
+			contentStr := string(content)
+			if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+				var req struct {
+					Content string `json:"content"`
+				}
+				if err := json.Unmarshal(content, &req); err == nil && req.Content != "" {
+					contentStr = req.Content
+				}
+				// If parsing fails or content is empty, fall back to raw body
+			}
+
+			if err := mgr.SavePlanningFile(goalID, project, filename, contentStr); err != nil {
 				http.Error(w, "Failed to save planning file: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
