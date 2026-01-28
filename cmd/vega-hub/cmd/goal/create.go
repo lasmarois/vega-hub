@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lasmarois/vega-hub/internal/cli"
@@ -238,19 +239,17 @@ func runCreate(c *cobra.Command, args []string) {
 	}
 	rollback = append(rollback, func() { os.Remove(goalFile) })
 
-	// Update REGISTRY.md
-	registryPath := filepath.Join(vegaDir, "goals", "REGISTRY.md")
-	if err := addGoalToRegistry(registryPath, goalID, title, project); err != nil {
+	// Update registry.jsonl
+	if err := addGoalToRegistry(vegaDir, goalID, title, project); err != nil {
 		doRollback()
 		cli.OutputError(cli.ExitInternalError, "registry_update_failed",
 			"Failed to update registry",
 			map[string]string{
-				"path":  registryPath,
 				"error": err.Error(),
 			},
 			nil)
 	}
-	rollback = append(rollback, func() { removeGoalFromRegistry(registryPath, goalID) })
+	rollback = append(rollback, func() { removeGoalFromRegistry(vegaDir, goalID) })
 
 	// Create worktree (unless --no-worktree)
 	var worktreePath string
@@ -565,69 +564,25 @@ func createGoalFile(path, id, title, project string) error {
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
-// addGoalToRegistry adds a new goal to the Active Goals section of REGISTRY.md
-func addGoalToRegistry(path, id, title, project string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	var newLines []string
-	inserted := false
-
-	for i, line := range lines {
-		newLines = append(newLines, line)
-
-		// Find the Active Goals table header row (|---...|)
-		// Insert our new goal right after it
-		if !inserted && strings.Contains(line, "|----") {
-			// Check if previous line is the Active Goals header
-			if i > 0 && strings.Contains(lines[i-1], "| ID |") {
-				// Check if we're in the Active Goals section
-				for j := i - 1; j >= 0; j-- {
-					if strings.Contains(lines[j], "## Active Goals") {
-						// Insert new goal row
-						newRow := fmt.Sprintf("| %s | %s | %s | Active | 1/? |", id, title, project)
-						newLines = append(newLines, newRow)
-						inserted = true
-						break
-					}
-					if strings.HasPrefix(lines[j], "## ") {
-						// Hit another section, stop looking
-						break
-					}
-				}
-			}
-		}
-	}
-
-	if !inserted {
-		return fmt.Errorf("could not find Active Goals table in registry")
-	}
-
-	return os.WriteFile(path, []byte(strings.Join(newLines, "\n")), 0644)
+// addGoalToRegistry adds a new goal to the JSONL registry
+func addGoalToRegistry(vegaDir, id, title, project string) error {
+	registry := goals.NewRegistry(vegaDir)
+	now := time.Now().Format(time.RFC3339)
+	return registry.Add(goals.RegistryEntry{
+		ID:        id,
+		Title:     title,
+		Projects:  []string{project},
+		Status:    "active",
+		Phase:     "1/?",
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
 }
 
 // removeGoalFromRegistry removes a goal from the registry (for rollback)
-func removeGoalFromRegistry(path, id string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	var newLines []string
-
-	for _, line := range lines {
-		// Skip lines that start with this goal ID
-		if strings.HasPrefix(strings.TrimSpace(line), "| "+id+" |") {
-			continue
-		}
-		newLines = append(newLines, line)
-	}
-
-	return os.WriteFile(path, []byte(strings.Join(newLines, "\n")), 0644)
+func removeGoalFromRegistry(vegaDir, id string) error {
+	registry := goals.NewRegistry(vegaDir)
+	return registry.Delete(id)
 }
 
 // createWorktree creates a git worktree for the goal
