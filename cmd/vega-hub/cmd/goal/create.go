@@ -200,20 +200,6 @@ func runCreate(c *cobra.Command, args []string) {
 		}
 	}
 
-	// Initialize state manager for tracking goal state
-	stateManager = goals.NewStateManager(vegaDir)
-
-	// Transition to pending state (goal creation starting)
-	if err := stateManager.Transition(goalID, goals.StatePending, "Goal created", map[string]string{
-		"title":   title,
-		"project": project,
-	}); err != nil {
-		cli.OutputError(cli.ExitInternalError, "state_transition_failed",
-			"Failed to initialize goal state",
-			map[string]string{"error": err.Error()},
-			nil)
-	}
-
 	// Create slug from title for branch name
 	slug := slugify(title)
 	goalBranch := fmt.Sprintf("goal-%s-%s", goalID, slug)
@@ -226,9 +212,35 @@ func runCreate(c *cobra.Command, args []string) {
 		}
 	}
 
-	// Create goal file
-	goalFile := filepath.Join(vegaDir, "goals", "active", goalID+".md")
+	// Create goal folder first (needed for state file)
+	goalDir := filepath.Join(vegaDir, "goals", "active", goalID)
+	if err := os.MkdirAll(goalDir, 0755); err != nil {
+		cli.OutputError(cli.ExitInternalError, "goal_dir_failed",
+			"Failed to create goal directory",
+			map[string]string{
+				"path":  goalDir,
+				"error": err.Error(),
+			},
+			nil)
+	}
+	rollback = append(rollback, func() { os.RemoveAll(goalDir) })
+
+	// Initialize state manager and transition to pending state
+	stateManager = goals.NewStateManager(vegaDir)
+	if err := stateManager.Transition(goalID, goals.StatePending, "Goal created", map[string]string{
+		"title":   title,
+		"project": project,
+	}); err != nil {
+		doRollback()
+		cli.OutputError(cli.ExitInternalError, "state_transition_failed",
+			"Failed to initialize goal state",
+			map[string]string{"error": err.Error()},
+			nil)
+	}
+	
+	goalFile := filepath.Join(goalDir, goalID+".md")
 	if err := createGoalFile(goalFile, goalID, title, project); err != nil {
+		doRollback()
 		cli.OutputError(cli.ExitInternalError, "goal_file_failed",
 			"Failed to create goal file",
 			map[string]string{
@@ -237,7 +249,6 @@ func runCreate(c *cobra.Command, args []string) {
 			},
 			nil)
 	}
-	rollback = append(rollback, func() { os.Remove(goalFile) })
 
 	// Update registry.jsonl
 	if err := addGoalToRegistry(vegaDir, goalID, title, project); err != nil {
