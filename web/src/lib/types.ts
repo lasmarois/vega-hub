@@ -68,6 +68,7 @@ export interface GoalSummary {
   completion_status?: CompletionStatus
   // Dependency fields
   is_blocked?: boolean
+  blockers?: string[]  // IDs of blocking goals
   // Hierarchy fields
   parent_id?: string
   has_children?: boolean

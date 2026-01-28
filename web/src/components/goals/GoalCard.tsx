@@ -74,9 +74,9 @@ export function GoalCard({ goal, onClick }: GoalCardProps) {
           </div>
           <div className="flex items-center gap-2">
             {goal.is_blocked && (
-              <Badge variant="warning" className="gap-1">
+              <Badge variant="warning" className="gap-1" title={goal.blockers?.length ? `Blocked by: ${goal.blockers.join(', ')}` : 'Blocked by dependencies'}>
                 <Ban className="h-3 w-3" />
-                Blocked
+                {goal.blockers?.length ? `Blocked by ${goal.blockers.length}` : 'Blocked'}
               </Badge>
             )}
             {(goal.parent_id || goal.has_children) && (

@@ -47,7 +47,7 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
   const filterOptions: { value: FilterType; label: string; count: number }[] = [
     { value: 'all', label: 'All', count: goals.length },
     { value: 'active', label: 'Active', count: goals.filter(g => g.status === 'active').length },
-    { value: 'ready', label: 'Ready', count: readyGoals.length },
+    { value: 'ready', label: 'Workable', count: readyGoals.length },
     { value: 'iced', label: 'Iced', count: goals.filter(g => g.status === 'iced').length },
     { value: 'completed', label: 'Completed', count: goals.filter(g => g.status === 'completed').length },
   ]
