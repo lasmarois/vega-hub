@@ -112,44 +112,78 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
   }, [activeAndIcedGoals, treeView])
 
   // Recursive tree node component
-  const renderGoalTree = (goal: GoalSummary, depth: number = 0) => {
+  const renderGoalTree = (goal: GoalSummary, depth: number = 0, isLast: boolean = true) => {
     const children = childrenMap.get(goal.id) || []
     const hasChildren = children.length > 0
     const isExpanded = expandedGoals.has(goal.id)
     
+    const toggleExpand = (e: React.MouseEvent) => {
+      e.stopPropagation()
+      const newExpanded = new Set(expandedGoals)
+      if (isExpanded) {
+        newExpanded.delete(goal.id)
+      } else {
+        newExpanded.add(goal.id)
+      }
+      setExpandedGoals(newExpanded)
+    }
+    
     return (
-      <div key={goal.id} style={{ marginLeft: depth * 24 }}>
-        <div className="flex items-center gap-1">
-          {hasChildren && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 p-0"
-              onClick={(e) => {
-                e.stopPropagation()
-                const newExpanded = new Set(expandedGoals)
-                if (isExpanded) {
-                  newExpanded.delete(goal.id)
-                } else {
-                  newExpanded.add(goal.id)
-                }
-                setExpandedGoals(newExpanded)
+      <div key={goal.id} className="relative">
+        {/* Tree connector lines */}
+        {depth > 0 && (
+          <>
+            {/* Vertical line from parent */}
+            <div 
+              className="absolute border-l-2 border-muted-foreground/30"
+              style={{ 
+                left: -12,
+                top: 0,
+                height: isLast ? 28 : '100%'
               }}
+            />
+            {/* Horizontal line to card */}
+            <div 
+              className="absolute border-t-2 border-muted-foreground/30"
+              style={{ 
+                left: -12,
+                top: 28,
+                width: 12
+              }}
+            />
+          </>
+        )}
+        
+        <div 
+          className="flex items-start gap-2"
+          style={{ marginLeft: depth * 24 }}
+        >
+          {/* Expand/collapse button for parents */}
+          {hasChildren ? (
+            <button
+              onClick={toggleExpand}
+              className="mt-3 p-1.5 rounded hover:bg-accent transition-colors z-10 relative"
+              aria-label={isExpanded ? "Collapse" : "Expand"}
             >
               <ChevronRight className={cn(
-                "h-4 w-4 transition-transform",
+                "h-4 w-4 text-muted-foreground transition-transform",
                 isExpanded && "rotate-90"
               )} />
-            </Button>
+            </button>
+          ) : (
+            <div className="w-7" /> 
           )}
-          {!hasChildren && <div className="w-7" />}
+          
           <div className="flex-1">
             <GoalCard goal={goal} onClick={() => onGoalClick(goal.id)} />
           </div>
         </div>
+        
         {hasChildren && isExpanded && (
-          <div className="mt-2 space-y-2">
-            {children.map((child: GoalSummary) => renderGoalTree(child, depth + 1))}
+          <div className="mt-2 space-y-2 relative" style={{ marginLeft: depth * 24 + 12 }}>
+            {children.map((child: GoalSummary, idx: number) => 
+              renderGoalTree(child, depth + 1, idx === children.length - 1)
+            )}
           </div>
         )}
       </div>
