@@ -111,6 +111,15 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
     return { rootGoals, childrenMap }
   }, [activeAndIcedGoals, treeView])
 
+  // Expand/collapse all
+  const expandAll = () => {
+    const allParents = new Set<string>()
+    childrenMap.forEach((_, parentId) => allParents.add(parentId))
+    setExpandedGoals(allParents)
+  }
+  
+  const collapseAll = () => setExpandedGoals(new Set())
+
   // Recursive tree node component
   const renderGoalTree = (goal: GoalSummary, depth: number = 0, isLast: boolean = true) => {
     const children = childrenMap.get(goal.id) || []
@@ -129,63 +138,89 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
     }
     
     return (
-      <div key={goal.id} className="relative">
-        {/* Tree connector lines */}
+      <div key={goal.id} className="relative group/tree">
+        {/* Tree connector lines - refined styling */}
         {depth > 0 && (
-          <>
-            {/* Vertical line from parent */}
+          <div 
+            className="absolute pointer-events-none"
+            style={{ left: depth * 28 - 20 }}
+          >
+            {/* Vertical line */}
             <div 
-              className="absolute border-l-2 border-muted-foreground/30"
-              style={{ 
-                left: -12,
-                top: 0,
-                height: isLast ? 28 : '100%'
-              }}
+              className={cn(
+                "absolute w-0.5 bg-gradient-to-b from-muted-foreground/40 to-muted-foreground/20",
+                "left-0 top-0 transition-colors group-hover/tree:from-primary/40 group-hover/tree:to-primary/20"
+              )}
+              style={{ height: isLast ? 32 : 'calc(100% + 8px)' }}
             />
-            {/* Horizontal line to card */}
+            {/* Horizontal line with rounded corner */}
             <div 
-              className="absolute border-t-2 border-muted-foreground/30"
-              style={{ 
-                left: -12,
-                top: 28,
-                width: 12
-              }}
+              className={cn(
+                "absolute h-0.5 bg-muted-foreground/30 transition-colors group-hover/tree:bg-primary/30",
+                "top-8 left-0"
+              )}
+              style={{ width: 16 }}
             />
-          </>
+            {/* Corner dot */}
+            <div 
+              className={cn(
+                "absolute w-1.5 h-1.5 rounded-full bg-muted-foreground/40 transition-colors group-hover/tree:bg-primary/50",
+                "top-[30px] left-[14px]"
+              )}
+            />
+          </div>
         )}
         
         <div 
-          className="flex items-start gap-2"
-          style={{ marginLeft: depth * 24 }}
+          className="flex items-start gap-1"
+          style={{ marginLeft: depth * 28 }}
         >
-          {/* Expand/collapse button for parents */}
+          {/* Expand/collapse button */}
           {hasChildren ? (
             <button
               onClick={toggleExpand}
-              className="mt-3 p-1.5 rounded hover:bg-accent transition-colors z-10 relative"
+              className={cn(
+                "mt-2.5 p-1.5 rounded-md transition-all duration-200 z-10 relative",
+                "hover:bg-accent/80 active:scale-95",
+                isExpanded && "bg-accent/50"
+              )}
               aria-label={isExpanded ? "Collapse" : "Expand"}
             >
               <ChevronRight className={cn(
-                "h-4 w-4 text-muted-foreground transition-transform",
-                isExpanded && "rotate-90"
+                "h-4 w-4 transition-transform duration-200 ease-out",
+                isExpanded ? "rotate-90 text-primary" : "text-muted-foreground"
               )} />
+              {/* Child count badge */}
+              {!isExpanded && (
+                <span className="absolute -top-1 -right-1 text-[10px] bg-muted text-muted-foreground rounded-full w-4 h-4 flex items-center justify-center font-medium">
+                  {children.length}
+                </span>
+              )}
             </button>
-          ) : (
-            <div className="w-7" /> 
-          )}
+          ) : depth > 0 ? (
+            <div className="w-8" />
+          ) : null}
           
-          <div className="flex-1">
+          <div className={cn("flex-1 transition-all duration-200", depth > 0 && "ml-1")}>
             <GoalCard goal={goal} onClick={() => onGoalClick(goal.id)} />
           </div>
         </div>
         
-        {hasChildren && isExpanded && (
-          <div className="mt-2 space-y-2 relative" style={{ marginLeft: depth * 24 + 12 }}>
-            {children.map((child: GoalSummary, idx: number) => 
-              renderGoalTree(child, depth + 1, idx === children.length - 1)
-            )}
-          </div>
-        )}
+        {/* Children with animation */}
+        <div 
+          className={cn(
+            "overflow-hidden transition-all duration-300 ease-out",
+            hasChildren && isExpanded ? "opacity-100 mt-2" : "opacity-0 h-0 mt-0"
+          )}
+        >
+          {hasChildren && (
+            <div className="space-y-2">
+              {children.map((child: GoalSummary, idx: number) => 
+                renderGoalTree(child, depth + 1, idx === children.length - 1)
+              )}
+            </div>
+          )}
+        </div>
       </div>
     )
   }
@@ -235,16 +270,41 @@ export function Goals({ goals, loading, onGoalClick, onRefresh }: GoalsProps) {
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant={treeView ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setTreeView(!treeView)}
-            className="gap-1.5"
-            title="Toggle tree view"
-          >
-            <GitFork className="h-4 w-4" />
-            Tree
-          </Button>
+          <div className="flex items-center border rounded-lg overflow-hidden">
+            <Button
+              variant={treeView ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setTreeView(!treeView)}
+              className="gap-1.5 rounded-none border-0"
+              title="Toggle tree view"
+            >
+              <GitFork className="h-4 w-4" />
+              Tree
+            </Button>
+            {treeView && childrenMap.size > 0 && (
+              <>
+                <div className="w-px h-5 bg-border" />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={expandAll}
+                  className="rounded-none border-0 px-2 h-8"
+                  title="Expand all"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={collapseAll}
+                  className="rounded-none border-0 px-2 h-8"
+                  title="Collapse all"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </>
+            )}
+          </div>
           <Select value={sort} onValueChange={(v) => setSort(v as SortType)}>
             <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="Sort by" />
