@@ -1,7 +1,7 @@
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
-import { Target, Snowflake, CheckCircle2, FolderOpen, AlertCircle, Activity, MessageCircle, Ban } from 'lucide-react'
+import { Target, Snowflake, CheckCircle2, FolderOpen, AlertCircle, Activity } from 'lucide-react'
 import { ActivityItem } from '@/components/shared/ActivityItem'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { GoalCard } from '@/components/goals'
@@ -131,30 +131,15 @@ export function Home({ goals, loading, pendingQuestions, activities, onGoalClick
           <div className="space-y-3">
             {/* Waiting on You - highest priority */}
             {waitingOnYou.map(goal => (
-              <div key={goal.id} className="relative">
-                <div className="absolute -left-2 top-3 flex items-center gap-1 text-xs text-red-500">
-                  <MessageCircle className="h-3 w-3" />
-                </div>
-                <GoalCard goal={goal} onClick={() => onGoalClick(goal.id)} />
-              </div>
+              <GoalCard key={goal.id} goal={goal} onClick={() => onGoalClick(goal.id)} />
             ))}
             {/* Blocked */}
             {blockedGoals.map(goal => (
-              <div key={goal.id} className="relative">
-                <div className="absolute -left-2 top-3 flex items-center gap-1 text-xs text-yellow-500">
-                  <Ban className="h-3 w-3" />
-                </div>
-                <GoalCard goal={goal} onClick={() => onGoalClick(goal.id)} />
-              </div>
+              <GoalCard key={goal.id} goal={goal} onClick={() => onGoalClick(goal.id)} />
             ))}
             {/* Ready to Complete */}
             {readyToComplete.map(goal => (
-              <div key={goal.id} className="relative">
-                <div className="absolute -left-2 top-3 flex items-center gap-1 text-xs text-green-500">
-                  <CheckCircle2 className="h-3 w-3" />
-                </div>
-                <GoalCard goal={goal} onClick={() => onGoalClick(goal.id)} />
-              </div>
+              <GoalCard key={goal.id} goal={goal} onClick={() => onGoalClick(goal.id)} />
             ))}
           </div>
         </section>
