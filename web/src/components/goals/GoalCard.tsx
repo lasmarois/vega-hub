@@ -64,9 +64,10 @@ export function GoalCard({ goal, onClick }: GoalCardProps) {
             <CardTitle className="text-base font-semibold flex items-center gap-1.5">
               #{goal.id}
               {goal.has_children && (
-                <span title="Has sub-goals">
-                  <Network className="h-4 w-4 text-primary" />
-                </span>
+                <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4">
+                  <Network className="h-3 w-3 mr-0.5" />
+                  Parent
+                </Badge>
               )}
             </CardTitle>
             {/* Project badge - more prominent */}
