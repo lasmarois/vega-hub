@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Sheet,
   SheetContent,
@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/popover'
 import { useMobile } from '@/hooks/useMobile'
 import { EmptyState } from '@/components/shared/EmptyState'
-import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle, Info, Activity, Sparkles, ListTodo, Ban, Link2, GitFork, ChevronRight, FolderOpen, FileCode } from 'lucide-react'
+import { Play, FileText, CheckCircle2, Circle, BookOpen, Clock, Maximize2, Minimize2, MoreVertical, Pause, Square, Trash2, AlertTriangle, GitBranch, GitCommit, ArrowUp, ArrowDown, FileWarning, GitPullRequest, RefreshCw, XCircle, Info, Activity, Sparkles, ListTodo, Ban, Link2, GitFork, ChevronRight, FolderOpen, FileCode, Zap, Bell } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { GoalDetail, GoalStatus, GoalState, PlanningFile } from '@/lib/types'
 
@@ -203,6 +203,84 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
   const [loadingPlanningFiles, setLoadingPlanningFiles] = useState(false)
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
   const [isMetaExecutor, setIsMetaExecutor] = useState(false)
+  const [hasNewPlanningFiles, setHasNewPlanningFiles] = useState(false)
+  const [spawningMeta, setSpawningMeta] = useState(false)
+
+  // Listen for SSE planning_file_received events to show badge
+  useEffect(() => {
+    if (!goal) return
+    
+    const handleSSE = (event: Event) => {
+      const customEvent = event as CustomEvent<{ goal_id: string; project: string; filename: string }>
+      if (customEvent.detail?.goal_id === goal.id) {
+        setHasNewPlanningFiles(true)
+      }
+    }
+    
+    window.addEventListener('planning_file_received', handleSSE)
+    return () => window.removeEventListener('planning_file_received', handleSSE)
+  }, [goal?.id])
+
+  // Clear new files indicator when files are loaded
+  const fetchPlanningFiles = useCallback(async () => {
+    if (!goal) return
+    setLoadingPlanningFiles(true)
+    try {
+      const res = await fetch(`/api/goals/${goal.id}/planning-files?full=true`)
+      if (res.ok) {
+        const data = await res.json()
+        // Convert { files: { project: { filename: content } } } to PlanningFile[]
+        const files: PlanningFile[] = []
+        if (data.files) {
+          for (const [project, fileMap] of Object.entries(data.files)) {
+            for (const [filename, content] of Object.entries(fileMap as Record<string, string>)) {
+              files.push({ project, filename, content })
+            }
+          }
+        }
+        setPlanningFiles(files)
+        setHasNewPlanningFiles(false)
+      }
+    } catch (err) {
+      console.error('Failed to fetch planning files:', err)
+    } finally {
+      setLoadingPlanningFiles(false)
+    }
+  }, [goal?.id])
+
+  // Handle spawning meta-executor
+  const handleSpawnMetaExecutor = async () => {
+    if (!goal) return
+    setSpawningMeta(true)
+    try {
+      console.log('[META-EXECUTOR] Intent to spawn meta-executor for goal:', goal.id)
+      console.log('[META-EXECUTOR] Planning files available:', planningFiles.length)
+      console.log('[META-EXECUTOR] Projects:', goal.projects)
+      
+      // For now, just log the intent. Full implementation will come in Phase 7.
+      const res = await fetch(`/api/goals/${goal.id}/spawn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context: `Aggregate findings from ${planningFiles.length} planning files across projects: ${goal.projects.join(', ')}`,
+          mode: 'implement',
+          meta: true,
+        }),
+      })
+
+      const data = await res.json()
+      if (data.success) {
+        onRefresh()
+      } else {
+        alert('Failed to spawn meta-executor: ' + data.message)
+      }
+    } catch (err) {
+      console.error('Failed to spawn meta-executor:', err)
+      alert('Failed to spawn meta-executor')
+    } finally {
+      setSpawningMeta(false)
+    }
+  }
 
   const handleAnswer = async (questionId: string, answer: string) => {
     if (!answer?.trim()) return
@@ -658,9 +736,15 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
             </TabsTrigger>
             <TabsTrigger
               value="files"
-              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary px-4 py-2 relative"
             >
               Files
+              {hasNewPlanningFiles && (
+                <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger
               value="timeline"
@@ -1089,30 +1173,56 @@ export function GoalSheet({ open, onOpenChange, goal, goalStatus, onRefresh }: G
               {goal.projects.length > 0 ? (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <h4 className="font-medium">Planning Files</h4>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-medium">Planning Files</h4>
+                      {hasNewPlanningFiles && (
+                        <Badge variant="secondary" className="gap-1">
+                          <Bell className="h-3 w-3" />
+                          New
+                        </Badge>
+                      )}
+                    </div>
                     <Button
                       variant="outline"
                       size="sm"
                       disabled={loadingPlanningFiles}
-                      onClick={async () => {
-                        setLoadingPlanningFiles(true)
-                        try {
-                          const res = await fetch(`/api/goals/${goal.id}/planning-files`)
-                          if (res.ok) {
-                            const files = await res.json()
-                            setPlanningFiles(files)
-                          }
-                        } catch (err) {
-                          console.error('Failed to fetch planning files:', err)
-                        } finally {
-                          setLoadingPlanningFiles(false)
-                        }
-                      }}
+                      onClick={fetchPlanningFiles}
                     >
                       <RefreshCw className={cn("h-4 w-4 mr-1", loadingPlanningFiles && "animate-spin")} />
                       Refresh
                     </Button>
                   </div>
+
+                  {/* Meta-Executor Trigger - only show when there are planning files */}
+                  {planningFiles.length > 0 && (
+                    <Card className="border-blue-500/30 bg-blue-50/50">
+                      <CardContent className="p-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Zap className="h-4 w-4 text-blue-600" />
+                            <div>
+                              <p className="text-sm font-medium text-blue-900">
+                                {planningFiles.length} planning file{planningFiles.length !== 1 ? 's' : ''} collected
+                              </p>
+                              <p className="text-xs text-blue-600">
+                                From {new Set(planningFiles.map(f => f.project)).size} project{new Set(planningFiles.map(f => f.project)).size !== 1 ? 's' : ''}
+                              </p>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="default"
+                            className="gap-1 bg-blue-600 hover:bg-blue-700"
+                            disabled={spawningMeta || goal.executor_status === 'running'}
+                            onClick={handleSpawnMetaExecutor}
+                          >
+                            <Zap className="h-3 w-3" />
+                            {spawningMeta ? 'Spawning...' : 'Spawn Meta-Executor'}
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
 
                   {planningFiles.length > 0 ? (
                     <div className="space-y-3">

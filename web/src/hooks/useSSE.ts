@@ -11,6 +11,8 @@ export interface SSEHandlers {
   onGoalIced?: (data: { goal_id: string }) => void
   onGoalCompleted?: (data: { goal_id: string }) => void
   onUserMessage?: (data: { goal_id: string; content: string; user: string }) => void
+  onPlanningFileReceived?: (data: { goal_id: string; project: string; filename: string }) => void
+  onPhaseUpdated?: (data: { goal_id: string; phase: number; status: string; project?: string }) => void
 }
 
 const RECONNECT_DELAY = 3000 // 3 seconds
@@ -91,6 +93,16 @@ export function useSSE(handlers: SSEHandlers) {
     eventSource.addEventListener('user_message', (e) => {
       const data = JSON.parse(e.data)
       handlersRef.current.onUserMessage?.(data)
+    })
+
+    eventSource.addEventListener('planning_file_received', (e) => {
+      const data = JSON.parse(e.data)
+      handlersRef.current.onPlanningFileReceived?.(data)
+    })
+
+    eventSource.addEventListener('phase_updated', (e) => {
+      const data = JSON.parse(e.data)
+      handlersRef.current.onPhaseUpdated?.(data)
     })
 
     eventSource.onerror = () => {

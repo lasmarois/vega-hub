@@ -139,6 +139,31 @@ function AppContent() {
     fetchGoals()
   }, [fetchGoals])
 
+  const handlePlanningFileReceived = useCallback((data: { goal_id: string; project: string; filename: string }) => {
+    toast({
+      title: 'Planning File Received',
+      description: `${data.project}/${data.filename} synced for goal #${data.goal_id}`,
+    })
+    // Dispatch custom event for GoalSheet to listen
+    window.dispatchEvent(new CustomEvent('planning_file_received', { detail: data }))
+    // Refresh goal detail if viewing this goal
+    if (selectedGoal && data.goal_id === selectedGoal.id) {
+      fetchGoalDetail(selectedGoal.id)
+    }
+  }, [selectedGoal, fetchGoalDetail])
+
+  const handlePhaseUpdated = useCallback((data: { goal_id: string; phase: number; status: string }) => {
+    toast({
+      title: 'Phase Updated',
+      description: `Goal #${data.goal_id} phase ${data.phase}: ${data.status}`,
+      variant: data.status === 'complete' ? 'success' : 'default',
+    })
+    fetchGoals()
+    if (selectedGoal && data.goal_id === selectedGoal.id) {
+      fetchGoalDetail(selectedGoal.id)
+    }
+  }, [fetchGoals, selectedGoal, fetchGoalDetail])
+
   const { connected } = useSSE({
     onQuestion: handleQuestion,
     onAnswered: handleAnswered,
@@ -148,6 +173,8 @@ function AppContent() {
     onGoalIced: handleGoalIced,
     onGoalCompleted: handleGoalCompleted,
     onRegistryUpdated: handleRegistryUpdated,
+    onPlanningFileReceived: handlePlanningFileReceived,
+    onPhaseUpdated: handlePhaseUpdated,
   })
 
   // Fetch goals on mount
